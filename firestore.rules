@@ -1,0 +1,54 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128;
+    }
+
+    // Test ping check
+    match /test/{testId} {
+      allow read, write: if true;
+    }
+
+    // Join Requests Collection - open for visitor requests & admin acceptance
+    match /joinRequests/{requestId} {
+      allow read, write: if isValidId(requestId);
+    }
+
+    // Private Chats Collection - real-time 1-on-1 human communication
+    match /privateChats/{visitorId} {
+      allow read, write: if isValidId(visitorId);
+
+      // Subcollection: Messages
+      match /messages/{messageId} {
+        allow read, write: if isValidId(messageId);
+      }
+    }
+
+    // Catalogue Items (Nine Sections) - public read for all visitors
+    match /items/{itemId} {
+      allow read: if true;
+      allow write: if isValidId(itemId);
+    }
+
+    // User Saved Items / Bookmarks
+    match /saved_items/{savedItemId} {
+      allow read, write: if isValidId(savedItemId);
+    }
+
+    // User Financial Watchlists
+    match /watchlists/{watchlistId} {
+      allow read, write: if isValidId(watchlistId);
+    }
+
+    // Admins and Users Collections
+    match /admins/{adminId} {
+      allow read, write: if isValidId(adminId);
+    }
+    match /users/{userId} {
+      allow read, write: if isValidId(userId);
+    }
+  }
+}

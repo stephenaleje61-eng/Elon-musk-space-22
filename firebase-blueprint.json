@@ -1,0 +1,175 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 256 },
+        "displayName": { "type": "string", "maxLength": 128 },
+        "photoURL": { "type": "string", "maxLength": 1024 },
+        "role": { "type": "string", "enum": ["user", "admin"] },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["uid", "email"]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Admin authorization entry",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "maxLength": 128 },
+        "email": { "type": "string", "maxLength": 256 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["uid", "email"]
+    },
+    "JoinRequest": {
+      "title": "JoinRequest",
+      "description": "Visitor request to join Elon Musk Space real human chat",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 128 },
+        "loc": { "type": "string", "maxLength": 128 },
+        "msg": { "type": "string", "maxLength": 2000 },
+        "time": { "type": "string", "maxLength": 64 },
+        "visitorId": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["pending", "accepted", "declined"] }
+      },
+      "required": ["name", "loc", "msg", "visitorId", "status"]
+    },
+    "PrivateChat": {
+      "title": "PrivateChat",
+      "description": "Active real human private chat channel between visitor and administrator",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "visitorId": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 128 },
+        "loc": { "type": "string", "maxLength": 128 },
+        "lastMsg": { "type": "string", "maxLength": 2000 },
+        "lastTime": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "maxLength": 32 }
+      },
+      "required": ["visitorId", "name", "loc"]
+    },
+    "RealChatMessage": {
+      "title": "RealChatMessage",
+      "description": "Permanent human-typed chat message with { from, text, time, real: true } structure",
+      "type": "object",
+      "properties": {
+        "from": { "type": "string", "maxLength": 128 },
+        "text": { "type": "string", "maxLength": 4000 },
+        "time": { "type": "string", "maxLength": 64 },
+        "real": { "type": "string" }
+      },
+      "required": ["from", "text", "time"]
+    },
+    "ContentItem": {
+      "title": "ContentItem",
+      "description": "Catalogue item, vehicle, technology project or article across nine sections",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "sectionId": {
+          "type": "string",
+          "enum": [
+            "tesla-clean-energy",
+            "robots-robotics",
+            "space-rockets",
+            "starlink-internet",
+            "artificial-intelligence",
+            "neuralink-brain-tech",
+            "tunnel-transport",
+            "x-digital-comm",
+            "investment-finance"
+          ]
+        },
+        "title": { "type": "string", "maxLength": 256 },
+        "category": { "type": "string", "maxLength": 128 },
+        "description": { "type": "string", "maxLength": 5000 },
+        "specifications": { "type": "string", "maxLength": 5000 },
+        "price": { "type": "string", "maxLength": 64 },
+        "currency": { "type": "string", "maxLength": 16 },
+        "images": { "type": "string", "maxLength": 5000 },
+        "sourceUrl": { "type": "string", "maxLength": 1024 },
+        "officialUrl": { "type": "string", "maxLength": 1024 },
+        "status": { "type": "string", "enum": ["published", "draft", "announced", "prototype", "commercial"] },
+        "isPublished": { "type": "string" },
+        "isFeatured": { "type": "string" },
+        "authorUid": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["sectionId", "title", "description", "category"]
+    },
+    "SavedItem": {
+      "title": "SavedItem",
+      "description": "A bookmarked product, vehicle, or tech article saved by an authenticated user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "itemId": { "type": "string", "maxLength": 128 },
+        "title": { "type": "string", "maxLength": 256 },
+        "sectionId": { "type": "string", "maxLength": 64 },
+        "category": { "type": "string", "maxLength": 128 },
+        "imageUrl": { "type": "string", "maxLength": 1024 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "itemId", "title"]
+    },
+    "WatchlistItem": {
+      "title": "WatchlistItem",
+      "description": "An investment or stock tracker item on user's personal watchlist",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "userId": { "type": "string", "maxLength": 128 },
+        "ticker": { "type": "string", "maxLength": 32 },
+        "companyName": { "type": "string", "maxLength": 128 },
+        "targetPrice": { "type": "string", "maxLength": 32 },
+        "notes": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["userId", "ticker", "companyName"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "UserProfile" },
+      "description": "User profiles restricted to owner and administrators"
+    },
+    "/admins/{adminId}": {
+      "schema": { "$ref": "AdminRecord" },
+      "description": "Admin identity records used for server-validated RBAC"
+    },
+    "/joinRequests/{requestId}": {
+      "schema": { "$ref": "JoinRequest" },
+      "description": "Visitor requests to join space chat"
+    },
+    "/privateChats/{visitorId}": {
+      "schema": { "$ref": "PrivateChat" },
+      "description": "Active real human private chats"
+    },
+    "/privateChats/{visitorId}/messages/{messageId}": {
+      "schema": { "$ref": "RealChatMessage" },
+      "description": "Real human messages between visitor and admin"
+    },
+    "/items/{itemId}": {
+      "schema": { "$ref": "ContentItem" },
+      "description": "Published content, products, vehicles, and innovation articles"
+    },
+    "/saved_items/{savedItemId}": {
+      "schema": { "$ref": "SavedItem" },
+      "description": "User bookmarked catalogue items"
+    },
+    "/watchlists/{watchlistId}": {
+      "schema": { "$ref": "WatchlistItem" },
+      "description": "User personal financial watchlist"
+    }
+  }
+}
