@@ -5,6 +5,7 @@ import {
   getDocs,
   setDoc, 
   addDoc, 
+  deleteDoc,
   query, 
   where, 
   orderBy, 
@@ -13,11 +14,460 @@ import {
   serverTimestamp 
 } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType, auth, ADMIN_EMAIL } from '../lib/firebase';
-import { JoinRequestItem, PrivateChatItem, RealMessage } from '../types';
+import { 
+  JoinRequestItem, 
+  PrivateChatItem, 
+  RealMessage, 
+  ChatUser, 
+  RealConversation, 
+  RealMessageItem, 
+  ReportItem 
+} from '../types';
 
 const LOCAL_STORAGE_KEY = 'elon_real_human_chat_v1';
+const LOCAL_USER_KEY = 'elon_chat_registered_user';
 
-// Helper to get local backup
+// =======================================================================
+// 1. REGISTERED CHAT USERS & PRESENCE (HUMAN-TO-HUMAN DIRECT DIRECTORY)
+// =======================================================================
+
+export async function registerOrUpdateUser(
+  userId: string,
+  displayName: string,
+  photoURL?: string
+): Promise<ChatUser> {
+  const userRef = doc(db, 'users', userId);
+  const now = new Date().toISOString();
+
+  let existingUser: Partial<ChatUser> = {};
+  try {
+    const snap = await getDoc(userRef);
+    if (snap.exists()) {
+      existingUser = snap.data() as ChatUser;
+    }
+  } catch (err) {
+    console.warn('Note reading existing user:', err);
+  }
+
+  const userData: ChatUser = {
+    userId,
+    displayName: displayName.trim() || existingUser.displayName || `StarlinkVoyager_${userId.slice(-4)}`,
+    photoURL: photoURL || existingUser.photoURL || '',
+    online: true,
+    lastSeen: now,
+    createdAt: existingUser.createdAt || now,
+    isSuspended: existingUser.isSuspended || false
+  };
+
+  try {
+    await setDoc(userRef, userData, { merge: true });
+  } catch (err) {
+    console.warn('Firestore set user notice:', err);
+  }
+
+  // Save in local storage
+  try {
+    localStorage.setItem(LOCAL_USER_KEY, JSON.stringify(userData));
+  } catch {}
+
+  return userData;
+}
+
+export async function setUserOnlineStatus(userId: string, online: boolean): Promise<void> {
+  if (!userId) return;
+  try {
+    const userRef = doc(db, 'users', userId);
+    await setDoc(userRef, {
+      online,
+      lastSeen: new Date().toISOString()
+    }, { merge: true });
+  } catch (err) {
+    console.warn('Failed to update presence:', err);
+  }
+}
+
+export function subscribeToUsers(callback: (users: ChatUser[]) => void) {
+  try {
+    const colRef = collection(db, 'users');
+    return onSnapshot(
+      colRef,
+      (snapshot) => {
+        const users: ChatUser[] = [];
+        snapshot.forEach((d) => {
+          users.push({ ...d.data() } as ChatUser);
+        });
+        // Sort: online first, then by lastSeen desc
+        users.sort((a, b) => {
+          if (a.online === b.online) {
+            return new Date(b.lastSeen || 0).getTime() - new Date(a.lastSeen || 0).getTime();
+          }
+          return a.online ? -1 : 1;
+        });
+        callback(users);
+      },
+      (error) => {
+        console.warn('Users listener notice:', error.message);
+        // Fallback to local storage if available
+        try {
+          const cached = localStorage.getItem(LOCAL_USER_KEY);
+          if (cached) callback([JSON.parse(cached)]);
+          else callback([]);
+        } catch {
+          callback([]);
+        }
+      }
+    );
+  } catch (err) {
+    callback([]);
+    return () => {};
+  }
+}
+
+// =======================================================================
+// 2. REAL CONVERSATIONS (1-ON-1 HUMAN-TO-HUMAN CHANNELS)
+// =======================================================================
+
+// Deterministic conversation ID for two users so both find the same channel
+export function getConversationId(userId1: string, userId2: string): string {
+  return [userId1, userId2].sort().join('_');
+}
+
+export async function getOrCreateConversation(
+  currentUser: ChatUser,
+  otherUser: ChatUser
+): Promise<string> {
+  const conversationId = getConversationId(currentUser.userId, otherUser.userId);
+  const convRef = doc(db, 'conversations', conversationId);
+
+  const now = new Date().toISOString();
+
+  try {
+    const snap = await getDoc(convRef);
+    if (!snap.exists()) {
+      const newConv: RealConversation = {
+        id: conversationId,
+        participants: [currentUser.userId, otherUser.userId],
+        participantDetails: {
+          [currentUser.userId]: {
+            displayName: currentUser.displayName,
+            photoURL: currentUser.photoURL || ''
+          },
+          [otherUser.userId]: {
+            displayName: otherUser.displayName,
+            photoURL: otherUser.photoURL || ''
+          }
+        },
+        lastMessage: '',
+        lastMessageAt: now,
+        lastSenderId: '',
+        createdAt: now,
+        unreadCount: {
+          [currentUser.userId]: 0,
+          [otherUser.userId]: 0
+        }
+      };
+      await setDoc(convRef, newConv, { merge: true });
+    } else {
+      // Ensure participant details are up-to-date
+      await setDoc(convRef, {
+        participantDetails: {
+          [currentUser.userId]: {
+            displayName: currentUser.displayName,
+            photoURL: currentUser.photoURL || ''
+          },
+          [otherUser.userId]: {
+            displayName: otherUser.displayName,
+            photoURL: otherUser.photoURL || ''
+          }
+        }
+      }, { merge: true });
+    }
+  } catch (err) {
+    console.warn('Notice getOrCreateConversation:', err);
+  }
+
+  return conversationId;
+}
+
+export function subscribeToUserConversations(
+  userId: string,
+  callback: (conversations: RealConversation[]) => void
+) {
+  try {
+    const q = query(
+      collection(db, 'conversations'),
+      where('participants', 'array-contains', userId)
+    );
+
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const convs: RealConversation[] = [];
+        snapshot.forEach((d) => {
+          convs.push({ id: d.id, ...d.data() } as RealConversation);
+        });
+        // Sort in memory by lastMessageAt desc to avoid composite index requirements
+        convs.sort((a, b) => new Date(b.lastMessageAt || b.createdAt || 0).getTime() - new Date(a.lastMessageAt || a.createdAt || 0).getTime());
+        callback(convs);
+      },
+      (error) => {
+        console.warn('Conversations listener notice:', error.message);
+        callback([]);
+      }
+    );
+  } catch (err) {
+    callback([]);
+    return () => {};
+  }
+}
+
+export function subscribeToAllConversations(
+  callback: (conversations: RealConversation[]) => void
+) {
+  try {
+    const colRef = collection(db, 'conversations');
+    return onSnapshot(
+      colRef,
+      (snapshot) => {
+        const convs: RealConversation[] = [];
+        snapshot.forEach((d) => {
+          convs.push({ id: d.id, ...d.data() } as RealConversation);
+        });
+        convs.sort((a, b) => new Date(b.lastMessageAt || 0).getTime() - new Date(a.lastMessageAt || 0).getTime());
+        callback(convs);
+      },
+      (error) => {
+        console.warn('All conversations listener notice:', error.message);
+        callback([]);
+      }
+    );
+  } catch (err) {
+    callback([]);
+    return () => {};
+  }
+}
+
+// =======================================================================
+// 3. MESSAGES (SUBCOLLECTION: conversations/{conversationId}/messages)
+// =======================================================================
+
+export async function sendHumanMessage(
+  conversationId: string,
+  senderId: string,
+  receiverId: string,
+  senderName: string,
+  text: string,
+  imageUrl?: string
+): Promise<string> {
+  const cleanText = text.trim();
+  if (!cleanText && !imageUrl) return '';
+
+  // 1. Verify user suspension status
+  try {
+    const senderDoc = await getDoc(doc(db, 'users', senderId));
+    if (senderDoc.exists() && senderDoc.data()?.isSuspended) {
+      throw new Error('Your account has been suspended by the platform administrator for violating communication guidelines.');
+    }
+  } catch (err: any) {
+    if (err?.message?.includes('suspended')) {
+      throw err;
+    }
+  }
+
+  const now = new Date().toISOString();
+  const messageId = `msg_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+  const messageData: RealMessageItem = {
+    id: messageId,
+    conversationId,
+    senderId,
+    receiverId,
+    senderName,
+    text: cleanText,
+    imageUrl: imageUrl || '',
+    createdAt: now,
+    status: 'sent'
+  };
+
+  try {
+    // 1. Add message doc
+    const msgRef = doc(db, 'conversations', conversationId, 'messages', messageId);
+    await setDoc(msgRef, messageData);
+
+    // 2. Update conversation summary
+    const convRef = doc(db, 'conversations', conversationId);
+    await setDoc(convRef, {
+      lastMessage: cleanText || '📷 [Image Attachment]',
+      lastMessageAt: now,
+      lastSenderId: senderId
+    }, { merge: true });
+
+    return messageId;
+  } catch (err) {
+    console.error('Failed to dispatch message to Firestore:', err);
+    throw err;
+  }
+}
+
+export function subscribeToConversationMessages(
+  conversationId: string,
+  callback: (messages: RealMessageItem[]) => void
+) {
+  if (!conversationId) {
+    callback([]);
+    return () => {};
+  }
+
+  try {
+    const messagesCol = collection(db, 'conversations', conversationId, 'messages');
+    const q = query(messagesCol, orderBy('createdAt', 'asc'));
+
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const msgs: RealMessageItem[] = [];
+        snapshot.forEach((d) => {
+          msgs.push({ id: d.id, ...d.data() } as RealMessageItem);
+        });
+        callback(msgs);
+      },
+      (error) => {
+        console.warn('Messages listener warning:', error.message);
+        callback([]);
+      }
+    );
+  } catch (err) {
+    callback([]);
+    return () => {};
+  }
+}
+
+export async function markMessagesAsRead(
+  conversationId: string,
+  currentUserId: string
+): Promise<void> {
+  if (!conversationId || !currentUserId) return;
+  try {
+    const messagesCol = collection(db, 'conversations', conversationId, 'messages');
+    const q = query(
+      messagesCol,
+      where('receiverId', '==', currentUserId),
+      where('status', '!=', 'read')
+    );
+    const snap = await getDocs(q);
+    const updates = snap.docs.map((d) => 
+      setDoc(doc(db, 'conversations', conversationId, 'messages', d.id), { status: 'read' }, { merge: true })
+    );
+    await Promise.all(updates);
+  } catch (err) {
+    console.warn('Notice marking messages as read:', err);
+  }
+}
+
+// =======================================================================
+// 4. REPORTING & ABUSE MODERATION (OWNER-EXCLUSIVE)
+// =======================================================================
+
+export async function reportAbusiveMessage(
+  reportedBy: string,
+  reportedByName: string,
+  reportedUserId: string,
+  conversationId: string,
+  messageId: string,
+  messageText: string,
+  reason: string
+): Promise<string> {
+  const reportId = `rep_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+  const now = new Date().toISOString();
+
+  const reportData: ReportItem = {
+    id: reportId,
+    reportedBy,
+    reportedByName,
+    reportedUserId,
+    conversationId,
+    messageId,
+    messageText,
+    reason,
+    createdAt: now,
+    status: 'pending'
+  };
+
+  try {
+    await setDoc(doc(db, 'reports', reportId), reportData);
+    return reportId;
+  } catch (err) {
+    console.error('Failed to submit report:', err);
+    throw err;
+  }
+}
+
+export function subscribeToReports(callback: (reports: ReportItem[]) => void) {
+  try {
+    const q = query(collection(db, 'reports'), orderBy('createdAt', 'desc'));
+    return onSnapshot(
+      q,
+      (snapshot) => {
+        const reports: ReportItem[] = [];
+        snapshot.forEach((d) => {
+          reports.push({ id: d.id, ...d.data() } as ReportItem);
+        });
+        callback(reports);
+      },
+      (err) => {
+        console.warn('Reports listener notice:', err);
+        callback([]);
+      }
+    );
+  } catch (err) {
+    callback([]);
+    return () => {};
+  }
+}
+
+export async function adminSuspendUser(userId: string, isSuspended: boolean): Promise<void> {
+  try {
+    await setDoc(doc(db, 'users', userId), { isSuspended }, { merge: true });
+  } catch (err) {
+    console.error('Failed to suspend user:', err);
+    throw err;
+  }
+}
+
+export async function adminDeleteUser(userId: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, 'users', userId));
+  } catch (err) {
+    console.error('Failed to delete user:', err);
+    throw err;
+  }
+}
+
+export async function adminDeleteMessage(conversationId: string, messageId: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, 'conversations', conversationId, 'messages', messageId));
+  } catch (err) {
+    console.error('Failed to delete message:', err);
+    throw err;
+  }
+}
+
+export async function adminUpdateReportStatus(
+  reportId: string, 
+  status: 'pending' | 'reviewed' | 'dismissed'
+): Promise<void> {
+  try {
+    await setDoc(doc(db, 'reports', reportId), { status }, { merge: true });
+  } catch (err) {
+    console.error('Failed to update report status:', err);
+    throw err;
+  }
+}
+
+// =======================================================================
+// 5. BACKWARD-COMPATIBILITY DESK HELPERS
+// =======================================================================
+
 export function getLocalChatBackup(): {
   joinRequests: Record<string, JoinRequestItem>;
   privateChats: Record<string, PrivateChatItem>;
@@ -32,7 +482,6 @@ export function getLocalChatBackup(): {
   }
 }
 
-// Helper to save local backup
 export function saveLocalChatBackup(data: {
   joinRequests?: Record<string, JoinRequestItem>;
   privateChats?: Record<string, PrivateChatItem>;
@@ -51,7 +500,6 @@ export function saveLocalChatBackup(data: {
   }
 }
 
-// 1. fbAddRequest
 export async function fbAddRequest(
   name: string,
   loc: string,
@@ -71,23 +519,19 @@ export async function fbAddRequest(
     status: 'pending'
   };
 
-  // 1. Local backup
   const currentLocal = getLocalChatBackup();
   currentLocal.joinRequests[requestId] = requestData;
   saveLocalChatBackup({ joinRequests: currentLocal.joinRequests });
 
-  // 2. Firestore write
   try {
     const reqRef = doc(db, 'joinRequests', requestId);
     await setDoc(reqRef, requestData);
     return requestId;
   } catch (error) {
-    console.warn('Firestore add joinRequest failed, saved locally:', error);
     return requestId;
   }
 }
 
-// 2. fbAccept
 export async function fbAccept(
   requestId: string,
   visitorId: string,
@@ -97,7 +541,6 @@ export async function fbAccept(
 ): Promise<void> {
   const time = new Date().toISOString();
 
-  // 1. Update join request status to accepted
   try {
     const reqRef = doc(db, 'joinRequests', requestId);
     await setDoc(reqRef, { status: 'accepted' }, { merge: true });
@@ -105,7 +548,6 @@ export async function fbAccept(
     console.warn('Failed to update join request status:', err);
   }
 
-  // 2. Create privateChats/{visitorId}
   const chatData: PrivateChatItem = {
     id: visitorId,
     visitorId,
@@ -120,8 +562,6 @@ export async function fbAccept(
     const chatRef = doc(db, 'privateChats', visitorId);
     await setDoc(chatRef, chatData, { merge: true });
 
-    // 3. Preserve the original request message as the first conversation message
-    // Check if initial message already exists
     const messagesCol = collection(db, 'privateChats', visitorId, 'messages');
     const existingSnap = await getDocs(messagesCol);
     if (existingSnap.empty) {
@@ -137,7 +577,6 @@ export async function fbAccept(
     console.warn('Failed to initialize privateChat in Firestore:', error);
   }
 
-  // Local backup update
   const local = getLocalChatBackup();
   if (local.joinRequests[requestId]) {
     local.joinRequests[requestId].status = 'accepted';
@@ -154,7 +593,6 @@ export async function fbAccept(
   saveLocalChatBackup(local);
 }
 
-// Decline request
 export async function fbDecline(requestId: string): Promise<void> {
   try {
     const reqRef = doc(db, 'joinRequests', requestId);
@@ -170,7 +608,6 @@ export async function fbDecline(requestId: string): Promise<void> {
   }
 }
 
-// 3. fbSendMsg
 export async function fbSendMsg(
   visitorId: string,
   from: string,
@@ -184,7 +621,6 @@ export async function fbSendMsg(
     real: true
   };
 
-  // Local backup
   const local = getLocalChatBackup();
   if (!local.messages[visitorId]) local.messages[visitorId] = [];
   local.messages[visitorId].push(messageData);
@@ -194,7 +630,6 @@ export async function fbSendMsg(
   }
   saveLocalChatBackup(local);
 
-  // Firestore update
   try {
     const messagesCol = collection(db, 'privateChats', visitorId, 'messages');
     await addDoc(messagesCol, messageData);
@@ -211,10 +646,7 @@ export async function fbSendMsg(
   }
 }
 
-// 4. fbListenRequests
-export function fbListenRequests(
-  callback: (requests: JoinRequestItem[]) => void
-) {
+export function fbListenRequests(callback: (requests: JoinRequestItem[]) => void) {
   try {
     const q = query(collection(db, 'joinRequests'), orderBy('time', 'desc'));
     return onSnapshot(
@@ -227,8 +659,6 @@ export function fbListenRequests(
         callback(reqs);
       },
       (error) => {
-        console.warn('JoinRequests listener notice:', error.message);
-        // Fallback to local storage
         const local = getLocalChatBackup();
         callback(Object.values(local.joinRequests));
       }
@@ -240,7 +670,6 @@ export function fbListenRequests(
   }
 }
 
-// Listen to visitor's specific join request
 export function fbListenVisitorRequest(
   visitorId: string,
   callback: (request: JoinRequestItem | null) => void
@@ -266,7 +695,6 @@ export function fbListenVisitorRequest(
         callback(matched);
       },
       (error) => {
-        console.warn('Visitor request listener notice:', error.message);
         const local = getLocalChatBackup();
         const found = Object.values(local.joinRequests).find(r => r.visitorId === visitorId);
         callback(found || null);
@@ -277,7 +705,6 @@ export function fbListenVisitorRequest(
   }
 }
 
-// 5. fbListenMessages
 export function fbListenMessages(
   visitorId: string,
   callback: (messages: RealMessage[]) => void
@@ -294,14 +721,8 @@ export function fbListenMessages(
           msgs.push({ id: d.id, ...d.data() } as RealMessage);
         });
         callback(msgs);
-
-        // Update local backup
-        const local = getLocalChatBackup();
-        local.messages[visitorId] = msgs;
-        saveLocalChatBackup(local);
       },
       (error) => {
-        console.warn('Messages listener notice:', error.message);
         const local = getLocalChatBackup();
         callback(local.messages[visitorId] || []);
       }
@@ -313,7 +734,6 @@ export function fbListenMessages(
   }
 }
 
-// 6. fbListenActiveChats
 export function fbListenActiveChats(
   callback: (chats: PrivateChatItem[]) => void
 ) {
@@ -329,7 +749,6 @@ export function fbListenActiveChats(
         callback(chats);
       },
       (error) => {
-        console.warn('Active chats listener notice:', error.message);
         const local = getLocalChatBackup();
         callback(Object.values(local.privateChats));
       }
@@ -341,7 +760,6 @@ export function fbListenActiveChats(
   }
 }
 
-// 7. EXPORT ALL CHATS
 export async function exportAllChats(): Promise<void> {
   const backupData: {
     exportedAt: string;
@@ -369,7 +787,6 @@ export async function exportAllChats(): Promise<void> {
     }
     backupData.totalChats = backupData.conversations.length;
   } catch (err) {
-    console.warn('Firestore export failed, falling back to local storage cache:', err);
     const local = getLocalChatBackup();
     Object.values(local.privateChats).forEach(chat => {
       backupData.conversations.push({
@@ -380,7 +797,6 @@ export async function exportAllChats(): Promise<void> {
     backupData.totalChats = backupData.conversations.length;
   }
 
-  // Trigger JSON download
   const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

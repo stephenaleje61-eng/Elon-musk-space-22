@@ -19,7 +19,7 @@ interface NavbarProps {
   currentSection: SectionId | 'home';
   onSelectSection: (id: SectionId | 'home') => void;
   onOpenChat: () => void;
-  onOpenAdminBoard: () => void;
+  onOpenAdminBoard?: () => void;
   onOpenSaved: () => void;
   onOpenSearch: () => void;
   savedCount: number;
@@ -47,16 +47,10 @@ export const Navbar: React.FC<NavbarProps> = ({
           <div className="flex items-center gap-2 truncate">
             <span className="inline-block w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
             <span className="font-medium text-white">ELON MUSK SPACE:</span>
-            <span className="truncate hidden sm:inline">Open Global Technology &amp; Innovation Intelligence Platform</span>
+            <span className="truncate hidden sm:inline">Explore Innovation. Discover Technology. Connect with the Future.</span>
           </div>
-          <div className="flex items-center gap-3 text-[11px] shrink-0 font-mono">
-            <button
-              onClick={onOpenAdminBoard}
-              className="text-[#33ddff] hover:text-white flex items-center gap-1 font-bold underline cursor-pointer"
-            >
-              <ShieldCheck className="w-3.5 h-3.5 text-[#33ddff]" />
-              <span>ELON MUSK ADMIN DESK (?admin=true)</span>
-            </button>
+          <div className="flex items-center gap-3 text-[11px] shrink-0 font-mono text-gray-400">
+            <span>REAL-TIME HUMAN CHAT ACTIVE</span>
           </div>
         </div>
       </div>
@@ -201,17 +195,6 @@ export const Navbar: React.FC<NavbarProps> = ({
               )}
             </button>
 
-            {/* DIRECT ELON MUSK ADMIN BOARD BUTTON - BROUGHT RIGHT OUT */}
-            <button
-              onClick={onOpenAdminBoard}
-              className="inline-flex items-center gap-2 px-3.5 py-2 sm:px-4 sm:py-2.5 bg-[#050a14] hover:bg-[#0a152a] text-[#33ddff] hover:text-white border border-[#33ddff]/50 rounded-xl font-extrabold text-xs sm:text-sm tracking-wider font-mono shadow-md hover:shadow-cyan-500/20 active:scale-95 transition-all cursor-pointer"
-              title="Open Admin Board to reply to messages as Elon Musk"
-            >
-              <ShieldCheck className="w-4 h-4 text-[#33ddff]" />
-              <span className="hidden sm:inline">ELON MUSK ADMIN BOARD</span>
-              <span className="sm:hidden">ADMIN</span>
-            </button>
-
             {/* Mobile menu hamburger */}
             <button
               onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
@@ -268,19 +251,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                 </button>
               ))}
             </div>
-          </div>
-
-          <div className="pt-2">
-            <button
-              onClick={() => {
-                onOpenAdminBoard();
-                setMobileMenuOpen(false);
-              }}
-              className="w-full py-2.5 bg-[#050a14] text-[#33ddff] border border-[#33ddff]/50 text-xs font-extrabold font-mono rounded-xl flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <ShieldCheck className="w-4 h-4 text-[#33ddff]" />
-              <span>OPEN ELON MUSK ADMIN BOARD</span>
-            </button>
           </div>
         </div>
       )}

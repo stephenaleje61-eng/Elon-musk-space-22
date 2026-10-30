@@ -7,48 +7,74 @@ service cloud.firestore {
       return id is string && id.size() > 0 && id.size() <= 128;
     }
 
-    // Test ping check
+    function isOwnerAdmin() {
+      return request.auth != null && (
+        (request.auth.token.email != null && request.auth.token.email.lower() == 'elonmuskspace241@gmail.com') ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // Ping check
     match /test/{testId} {
       allow read, write: if true;
     }
 
-    // Join Requests Collection - open for visitor requests & admin acceptance
-    match /joinRequests/{requestId} {
-      allow read, write: if isValidId(requestId);
+    // Admins collection - strictly restricted to owner
+    match /admins/{adminId} {
+      allow read: if request.auth != null;
+      allow write: if isOwnerAdmin();
     }
 
-    // Private Chats Collection - real-time 1-on-1 human communication
-    match /privateChats/{visitorId} {
-      allow read, write: if isValidId(visitorId);
+    // Registered Chat Users directory
+    match /users/{userId} {
+      allow read, write: if true;
+      allow delete: if isOwnerAdmin();
+    }
 
-      // Subcollection: Messages
+    // Direct 1-on-1 Real Human Conversations
+    match /conversations/{conversationId} {
+      allow read, write: if true;
+      allow delete: if isOwnerAdmin();
+
+      // Messages Subcollection
       match /messages/{messageId} {
-        allow read, write: if isValidId(messageId);
+        allow read, write: if true;
+        allow delete: if isOwnerAdmin();
       }
     }
 
-    // Catalogue Items (Nine Sections) - public read for all visitors
+    // Abusive Message & User Reports Queue - Only owner can read, resolve, delete
+    match /reports/{reportId} {
+      allow create: if true;
+      allow read, update, delete: if isOwnerAdmin();
+    }
+
+    // Catalogue Items (Nine Sections)
     match /items/{itemId} {
       allow read: if true;
-      allow write: if isValidId(itemId);
+      allow write: if isOwnerAdmin();
     }
 
     // User Saved Items / Bookmarks
     match /saved_items/{savedItemId} {
-      allow read, write: if isValidId(savedItemId);
+      allow read, write: if true;
     }
 
     // User Financial Watchlists
     match /watchlists/{watchlistId} {
-      allow read, write: if isValidId(watchlistId);
+      allow read, write: if true;
     }
 
-    // Admins and Users Collections
-    match /admins/{adminId} {
-      allow read, write: if isValidId(adminId);
+    // Legacy Support Collections
+    match /joinRequests/{requestId} {
+      allow read, write: if true;
     }
-    match /users/{userId} {
-      allow read, write: if isValidId(userId);
+
+    match /privateChats/{visitorId} {
+      allow read, write: if true;
+      match /messages/{messageId} {
+        allow read, write: if true;
+      }
     }
   }
 }

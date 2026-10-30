@@ -1,19 +1,68 @@
 {
   "entities": {
-    "UserProfile": {
-      "title": "UserProfile",
-      "description": "User profile information",
+    "ChatUser": {
+      "title": "ChatUser",
+      "description": "Public profile and presence of a registered chat participant",
       "type": "object",
       "properties": {
-        "uid": { "type": "string", "maxLength": 128 },
-        "email": { "type": "string", "maxLength": 256 },
+        "userId": { "type": "string", "maxLength": 128 },
         "displayName": { "type": "string", "maxLength": 128 },
         "photoURL": { "type": "string", "maxLength": 1024 },
-        "role": { "type": "string", "enum": ["user", "admin"] },
-        "createdAt": { "type": "string" },
-        "updatedAt": { "type": "string" }
+        "online": { "type": "string" },
+        "lastSeen": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "isSuspended": { "type": "string" }
       },
-      "required": ["uid", "email"]
+      "required": ["userId", "displayName"]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "Direct 1-on-1 human communication channel between two registered users",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "participants": { "type": "string", "maxLength": 512 },
+        "lastMessage": { "type": "string", "maxLength": 4000 },
+        "lastMessageAt": { "type": "string", "maxLength": 64 },
+        "lastSenderId": { "type": "string", "maxLength": 128 },
+        "createdAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["id", "participants"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Permanent human-typed chat message saved in Firestore",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "conversationId": { "type": "string", "maxLength": 128 },
+        "senderId": { "type": "string", "maxLength": 128 },
+        "receiverId": { "type": "string", "maxLength": 128 },
+        "senderName": { "type": "string", "maxLength": 128 },
+        "text": { "type": "string", "maxLength": 4000 },
+        "imageUrl": { "type": "string", "maxLength": 1024 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "enum": ["sent", "delivered", "read"] }
+      },
+      "required": ["conversationId", "senderId", "receiverId", "text", "createdAt"]
+    },
+    "ChatReport": {
+      "title": "ChatReport",
+      "description": "User flagged abusive message or account report for owner moderation",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "reportedBy": { "type": "string", "maxLength": 128 },
+        "reportedByName": { "type": "string", "maxLength": 128 },
+        "reportedUserId": { "type": "string", "maxLength": 128 },
+        "conversationId": { "type": "string", "maxLength": 128 },
+        "messageId": { "type": "string", "maxLength": 128 },
+        "messageText": { "type": "string", "maxLength": 4000 },
+        "reason": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "status": { "type": "string", "enum": ["pending", "reviewed", "dismissed"] }
+      },
+      "required": ["reportedBy", "reportedUserId", "messageId", "messageText", "reason"]
     },
     "AdminRecord": {
       "title": "AdminRecord",
@@ -25,48 +74,6 @@
         "createdAt": { "type": "string" }
       },
       "required": ["uid", "email"]
-    },
-    "JoinRequest": {
-      "title": "JoinRequest",
-      "description": "Visitor request to join Elon Musk Space real human chat",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string", "maxLength": 128 },
-        "name": { "type": "string", "maxLength": 128 },
-        "loc": { "type": "string", "maxLength": 128 },
-        "msg": { "type": "string", "maxLength": 2000 },
-        "time": { "type": "string", "maxLength": 64 },
-        "visitorId": { "type": "string", "maxLength": 128 },
-        "status": { "type": "string", "enum": ["pending", "accepted", "declined"] }
-      },
-      "required": ["name", "loc", "msg", "visitorId", "status"]
-    },
-    "PrivateChat": {
-      "title": "PrivateChat",
-      "description": "Active real human private chat channel between visitor and administrator",
-      "type": "object",
-      "properties": {
-        "id": { "type": "string", "maxLength": 128 },
-        "visitorId": { "type": "string", "maxLength": 128 },
-        "name": { "type": "string", "maxLength": 128 },
-        "loc": { "type": "string", "maxLength": 128 },
-        "lastMsg": { "type": "string", "maxLength": 2000 },
-        "lastTime": { "type": "string", "maxLength": 64 },
-        "status": { "type": "string", "maxLength": 32 }
-      },
-      "required": ["visitorId", "name", "loc"]
-    },
-    "RealChatMessage": {
-      "title": "RealChatMessage",
-      "description": "Permanent human-typed chat message with { from, text, time, real: true } structure",
-      "type": "object",
-      "properties": {
-        "from": { "type": "string", "maxLength": 128 },
-        "text": { "type": "string", "maxLength": 4000 },
-        "time": { "type": "string", "maxLength": 64 },
-        "real": { "type": "string" }
-      },
-      "required": ["from", "text", "time"]
     },
     "ContentItem": {
       "title": "ContentItem",
@@ -140,24 +147,24 @@
   },
   "firestore": {
     "/users/{userId}": {
-      "schema": { "$ref": "UserProfile" },
-      "description": "User profiles restricted to owner and administrators"
+      "schema": { "$ref": "ChatUser" },
+      "description": "Registered chat participants with presence and display profile"
+    },
+    "/conversations/{conversationId}": {
+      "schema": { "$ref": "Conversation" },
+      "description": "Active real-time human chat channels between two registered users"
+    },
+    "/conversations/{conversationId}/messages/{messageId}": {
+      "schema": { "$ref": "ChatMessage" },
+      "description": "Permanent human messages with real-time delivery and read status"
+    },
+    "/reports/{reportId}": {
+      "schema": { "$ref": "ChatReport" },
+      "description": "Flagged abusive messages and moderation queue for the owner"
     },
     "/admins/{adminId}": {
       "schema": { "$ref": "AdminRecord" },
       "description": "Admin identity records used for server-validated RBAC"
-    },
-    "/joinRequests/{requestId}": {
-      "schema": { "$ref": "JoinRequest" },
-      "description": "Visitor requests to join space chat"
-    },
-    "/privateChats/{visitorId}": {
-      "schema": { "$ref": "PrivateChat" },
-      "description": "Active real human private chats"
-    },
-    "/privateChats/{visitorId}/messages/{messageId}": {
-      "schema": { "$ref": "RealChatMessage" },
-      "description": "Real human messages between visitor and admin"
     },
     "/items/{itemId}": {
       "schema": { "$ref": "ContentItem" },

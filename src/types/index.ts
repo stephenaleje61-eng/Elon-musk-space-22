@@ -175,3 +175,53 @@ export interface RealMessage {
   time: string;
   real: true;
 }
+
+export interface ChatUser {
+  userId: string;
+  displayName: string;
+  photoURL?: string;
+  online: boolean;
+  lastSeen: string;
+  createdAt: string;
+  isSuspended?: boolean;
+}
+
+export interface RealConversation {
+  id: string;
+  participants: string[];
+  participantDetails: Record<string, {
+    displayName: string;
+    photoURL?: string;
+  }>;
+  lastMessage: string;
+  lastMessageAt: string;
+  lastSenderId: string;
+  createdAt: string;
+  unreadCount?: Record<string, number>;
+}
+
+export interface RealMessageItem {
+  id: string;
+  conversationId: string;
+  senderId: string;
+  receiverId: string;
+  senderName: string;
+  text: string;
+  imageUrl?: string;
+  createdAt: string;
+  status: 'sent' | 'delivered' | 'read';
+}
+
+export interface ReportItem {
+  id: string;
+  reportedBy: string;
+  reportedByName?: string;
+  reportedUserId: string;
+  conversationId: string;
+  messageId: string;
+  messageText: string;
+  reason: string;
+  createdAt: string;
+  status: 'pending' | 'reviewed' | 'dismissed';
+}
+

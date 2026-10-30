@@ -36,9 +36,9 @@ export default function App() {
   // Navigation
   const [currentSection, setCurrentSection] = useState<SectionId | 'home'>('home');
 
-  // Direct Admin Board State (triggered via ?admin=true or the ELON MUSK ADMIN BOARD button in header)
+  // Direct Admin Board State (triggered via /admin path or ?admin=true query param)
   const [adminBoardOpen, setAdminBoardOpen] = useState<boolean>(() => {
-    return window.location.search.includes('admin=true');
+    return window.location.search.includes('admin=true') || window.location.pathname.startsWith('/admin');
   });
 
   // Stable Visitor Identity (Zero login barrier, preserved in localStorage)
@@ -71,10 +71,10 @@ export default function App() {
     initSilentAuth();
   }, []);
 
-  // Sync URL changes for ?admin=true
+  // Sync URL changes for ?admin=true or /admin
   useEffect(() => {
     const handlePopState = () => {
-      setAdminBoardOpen(window.location.search.includes('admin=true'));
+      setAdminBoardOpen(window.location.search.includes('admin=true') || window.location.pathname.startsWith('/admin'));
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
@@ -149,7 +149,7 @@ export default function App() {
 
   const handleExitAdminBoard = () => {
     setAdminBoardOpen(false);
-    window.history.pushState({}, '', window.location.pathname);
+    window.history.pushState({}, '', '/');
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
