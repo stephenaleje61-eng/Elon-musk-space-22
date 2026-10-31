@@ -167,8 +167,8 @@ export const AdminCMSModal: React.FC<AdminCMSModalProps> = ({
   };
 
   const filteredItems = items.filter(it => {
-    const matchesSearch = it.title.toLowerCase().includes(searchFilter.toLowerCase()) ||
-                          it.category.toLowerCase().includes(searchFilter.toLowerCase());
+    const matchesSearch = (it.title || '').toLowerCase().includes((searchFilter || '').toLowerCase()) ||
+                          (it.category || '').toLowerCase().includes((searchFilter || '').toLowerCase());
     const matchesSection = selectedSectionFilter === 'all' || it.sectionId === selectedSectionFilter;
     return matchesSearch && matchesSection;
   });

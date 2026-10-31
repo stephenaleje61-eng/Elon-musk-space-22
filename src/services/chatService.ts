@@ -94,7 +94,16 @@ export function subscribeToUsers(callback: (users: ChatUser[]) => void) {
       (snapshot) => {
         const users: ChatUser[] = [];
         snapshot.forEach((d) => {
-          users.push({ ...d.data() } as ChatUser);
+          const data = d.data() as any;
+          users.push({
+            userId: data.userId || d.id,
+            displayName: data.displayName || data.name || (data.email ? data.email.split('@')[0] : `Member_${d.id.slice(-4)}`),
+            photoURL: data.photoURL || '',
+            online: typeof data.online === 'boolean' ? data.online : false,
+            lastSeen: data.lastSeen || '',
+            createdAt: data.createdAt || '',
+            isSuspended: !!data.isSuspended
+          });
         });
         // Sort: online first, then by lastSeen desc
         users.sort((a, b) => {
@@ -806,4 +815,14 @@ export async function exportAllChats(): Promise<void> {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+export const subscribeToJoinRequests = fbListenRequests;
+
+export async function updateJoinRequestStatus(requestId: string, status: 'accepted' | 'declined'): Promise<void> {
+  if (status === 'accepted') {
+    await fbAccept(requestId, requestId.replace('req_', '').split('_')[0] || 'visitor', 'Visitor', 'Global', 'Welcome to Elon Musk Space!');
+  } else {
+    await fbDecline(requestId);
+  }
 }

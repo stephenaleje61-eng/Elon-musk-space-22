@@ -8,9 +8,9 @@ export const StarlinkCountryChecker: React.FC = () => {
   const [selectedCountry, setSelectedCountry] = useState<StarlinkCountry>(STARLINK_COUNTRIES[0]);
 
   const filteredCountries = STARLINK_COUNTRIES.filter(c => 
-    c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    c.countryCode.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    c.region.toLowerCase().includes(searchQuery.toLowerCase())
+    (c?.name || '').toLowerCase().includes((searchQuery || '').toLowerCase()) ||
+    (c?.countryCode || '').toLowerCase().includes((searchQuery || '').toLowerCase()) ||
+    (c?.region || '').toLowerCase().includes((searchQuery || '').toLowerCase())
   );
 
   return (

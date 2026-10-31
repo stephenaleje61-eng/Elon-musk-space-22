@@ -2,11 +2,6 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions
-    function isValidId(id) {
-      return id is string && id.size() > 0 && id.size() <= 128;
-    }
-
     function isOwnerAdmin() {
       return request.auth != null && (
         (request.auth.token.email != null && request.auth.token.email.lower() == 'elonmuskspace241@gmail.com') ||
@@ -14,39 +9,61 @@ service cloud.firestore {
       );
     }
 
-    // Ping check
+    // Ping / Test check
     match /test/{testId} {
       allow read, write: if true;
     }
 
-    // Admins collection - strictly restricted to owner
+    // Admins collection
     match /admins/{adminId} {
       allow read: if request.auth != null;
       allow write: if isOwnerAdmin();
     }
 
-    // Registered Chat Users directory
-    match /users/{userId} {
-      allow read, write: if true;
+    // 1. Friend Requests System (Real like Facebook)
+    match /friendRequests/{reqId} {
+      allow create: if true;
+      allow read, update: if request.auth != null && (
+        (request.auth.token.email != null && request.auth.token.email.lower() == 'elonmuskspace241@gmail.com') ||
+        request.auth.uid == resource.data.senderId
+      );
       allow delete: if isOwnerAdmin();
     }
 
-    // Direct 1-on-1 Real Human Conversations
-    match /conversations/{conversationId} {
-      allow read, write: if true;
-      allow delete: if isOwnerAdmin();
+    // Friendships Collection
+    match /friendships/{friendshipId} {
+      allow read: if request.auth != null && (
+        (request.auth.token.email != null && request.auth.token.email.lower() == 'elonmuskspace241@gmail.com') ||
+        request.auth.uid in resource.data.participants
+      );
+      allow create, update, delete: if isOwnerAdmin();
+    }
+
+    // 2. Real Human 1-on-1 Conversations
+    match /conversations/{convoId} {
+      allow read: if request.auth != null && (
+        (request.auth.token.email != null && request.auth.token.email.lower() == 'elonmuskspace241@gmail.com') ||
+        request.auth.uid in resource.data.participants
+      );
+      allow create: if isOwnerAdmin();
+      allow update: if request.auth != null && (
+        (request.auth.token.email != null && request.auth.token.email.lower() == 'elonmuskspace241@gmail.com') ||
+        request.auth.uid in resource.data.participants
+      );
+      allow delete: if request.auth != null && request.auth.token.email != null && request.auth.token.email.lower() == 'elonmuskspace241@gmail.com';
 
       // Messages Subcollection
-      match /messages/{messageId} {
-        allow read, write: if true;
-        allow delete: if isOwnerAdmin();
+      match /messages/{msgId} {
+        allow read, create: if request.auth != null && (
+          (request.auth.token.email != null && request.auth.token.email.lower() == 'elonmuskspace241@gmail.com') ||
+          request.auth.uid in get(/databases/$(database)/documents/conversations/$(convoId)).data.participants
+        );
+        allow update: if request.auth != null && (
+          (request.auth.token.email != null && request.auth.token.email.lower() == 'elonmuskspace241@gmail.com') ||
+          request.auth.uid in get(/databases/$(database)/documents/conversations/$(convoId)).data.participants
+        );
+        allow delete: if request.auth != null && request.auth.token.email != null && request.auth.token.email.lower() == 'elonmuskspace241@gmail.com';
       }
-    }
-
-    // Abusive Message & User Reports Queue - Only owner can read, resolve, delete
-    match /reports/{reportId} {
-      allow create: if true;
-      allow read, update, delete: if isOwnerAdmin();
     }
 
     // Catalogue Items (Nine Sections)
@@ -55,7 +72,7 @@ service cloud.firestore {
       allow write: if isOwnerAdmin();
     }
 
-    // User Saved Items / Bookmarks
+    // User Saved Items
     match /saved_items/{savedItemId} {
       allow read, write: if true;
     }
@@ -63,6 +80,18 @@ service cloud.firestore {
     // User Financial Watchlists
     match /watchlists/{watchlistId} {
       allow read, write: if true;
+    }
+
+    // Users Directory
+    match /users/{userId} {
+      allow read, write: if true;
+      allow delete: if isOwnerAdmin();
+    }
+
+    // Abusive Message Reports
+    match /reports/{reportId} {
+      allow create: if true;
+      allow read, update, delete: if isOwnerAdmin();
     }
 
     // Legacy Support Collections

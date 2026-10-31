@@ -9,27 +9,24 @@ import {
   Ban, 
   CheckCircle2, 
   Search, 
-  Activity, 
   Layers, 
   LogOut, 
   LogIn, 
   Lock, 
-  Eye, 
-  ExternalLink,
+  Send,
+  CheckCheck,
+  Check,
+  X,
   RefreshCw,
-  X
+  UserCheck,
+  UserX,
+  Archive
 } from 'lucide-react';
-import { 
-  ChatUser, 
-  RealConversation, 
-  RealMessageItem, 
-  ReportItem, 
-  ContentItem 
-} from '../types';
 import { 
   auth, 
   googleProvider, 
-  ADMIN_EMAIL 
+  ADMIN_EMAIL,
+  ADMIN_UID
 } from '../lib/firebase';
 import { 
   signInWithPopup, 
@@ -39,21 +36,29 @@ import {
   User 
 } from 'firebase/auth';
 import { 
-  subscribeToUsers, 
-  subscribeToAllConversations, 
-  subscribeToConversationMessages, 
-  subscribeToReports, 
-  adminSuspendUser, 
-  adminDeleteUser, 
-  adminDeleteMessage, 
-  adminUpdateReportStatus 
-} from '../services/chatService';
+  subscribeToAllFriendRequests,
+  acceptFriendRequest,
+  declineFriendRequest,
+  subscribeToAdminChats,
+  subscribeToChatMessages,
+  sendChatMessage,
+  markChatAsRead,
+  setChatTyping,
+  adminDeleteConversation,
+  FriendRequest,
+  RealConversation,
+  RealChatMessage
+} from '../services/friendChatService';
+import { ContentItem } from '../types';
 import { AdminCMSModal } from './AdminCMSModal';
+import { SpaceXIcon } from './SpaceXIcon';
 
 interface AdminDirectDashboardProps {
   onClose: () => void;
   items: ContentItem[];
 }
+
+const ELON_AVATAR = 'https://upload.wikimedia.org/wikipedia/commons/thumb/3/34/Elon_Musk_Royal_Society_%28crop2%29.jpg/240px-Elon_Musk_Royal_Society_%28crop2%29.jpg';
 
 export const AdminDirectDashboard: React.FC<AdminDirectDashboardProps> = ({
   onClose,
@@ -62,25 +67,32 @@ export const AdminDirectDashboard: React.FC<AdminDirectDashboardProps> = ({
   const [currentUser, setCurrentUser] = useState<User | null>(auth.currentUser);
   const [authLoading, setAuthLoading] = useState(true);
 
-  // Email/Password login inputs for owner
-  const [emailInput, setEmailInput] = useState('');
+  // Authentication inputs
+  const [emailInput, setEmailInput] = useState(ADMIN_EMAIL);
   const [passwordInput, setPasswordInput] = useState('');
   const [loginError, setLoginError] = useState<string | null>(null);
   const [loggingIn, setLoggingIn] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Dashboard state
-  const [activeTab, setActiveTab] = useState<'users' | 'conversations' | 'reports' | 'stats' | 'cms'>('users');
-  const [users, setUsers] = useState<ChatUser[]>([]);
+  // Dashboard Tabs: Tab 1: Friend Requests, Tab 2: Chats, Tab 3: CMS
+  const [activeTab, setActiveTab] = useState<'requests' | 'chats' | 'cms'>('requests');
+
+  // Tab 1: Friend Requests
+  const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([]);
+  const [reqFilter, setReqFilter] = useState<'pending' | 'accepted' | 'declined' | 'all'>('pending');
+  const [processingReqId, setProcessingReqId] = useState<string | null>(null);
+
+  // Tab 2: Accepted Chats
   const [conversations, setConversations] = useState<RealConversation[]>([]);
-  const [reports, setReports] = useState<ReportItem[]>([]);
-  const [userSearch, setUserSearch] = useState('');
-
-  // Selected conversation for message inspection
-  const [selectedConvId, setSelectedConvId] = useState<string | null>(null);
-  const [convMessages, setConvMessages] = useState<RealMessageItem[]>([]);
-  const [currentTime, setCurrentTime] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedConvoId, setSelectedConvoId] = useState<string | null>(null);
+  const [messages, setMessages] = useState<RealChatMessage[]>([]);
+  const [inputText, setInputText] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const adminTypingTimeoutRef = useRef<any>(null);
 
   // Monitor Auth State
   useEffect(() => {
@@ -91,52 +103,57 @@ export const AdminDirectDashboard: React.FC<AdminDirectDashboardProps> = ({
     return () => unsubscribe();
   }, []);
 
-  // Live UTC Clock
+  // Strict Admin Check: ONLY elonmuskspace241@gmail.com
+  const isVerifiedAdmin = 
+    currentUser?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase() ||
+    currentUser?.uid === ADMIN_UID;
+
+  // Real-time Subscriptions for Verified Admin
   useEffect(() => {
-    const updateTime = () => {
-      const now = new Date();
-      setCurrentTime(now.toUTCString().replace('GMT', 'UTC'));
-    };
-    updateTime();
-    const interval = setInterval(updateTime, 1000);
-    return () => clearInterval(interval);
-  }, []);
+    if (!isVerifiedAdmin) return;
 
-  // Is verified owner
-  const isOwner = currentUser?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
+    // 1. Subscribe to all friend requests
+    const unsubReqs = subscribeToAllFriendRequests((list) => {
+      setFriendRequests(list);
+    });
 
-  // Load Real-time Data if Owner
-  useEffect(() => {
-    if (!isOwner) return;
-
-    const unsubUsers = subscribeToUsers((u) => setUsers(u));
-    const unsubConvs = subscribeToAllConversations((c) => setConversations(c));
-    const unsubReports = subscribeToReports((r) => setReports(r));
+    // 2. Subscribe to accepted conversations
+    const unsubChats = subscribeToAdminChats((convList) => {
+      // Filter out deleted if desired or keep active
+      const activeConvs = convList.filter(c => !c.deletedByAdmin);
+      setConversations(activeConvs);
+      if (!selectedConvoId && activeConvs.length > 0) {
+        setSelectedConvoId(activeConvs[0].id);
+      }
+    });
 
     return () => {
-      unsubUsers();
-      unsubConvs();
-      unsubReports();
+      unsubReqs();
+      unsubChats();
     };
-  }, [isOwner]);
+  }, [isVerifiedAdmin]);
 
-  // Listen to messages of selected conversation
+  // Subscribe to Selected Conversation Messages
   useEffect(() => {
-    if (!isOwner || !selectedConvId) {
-      setConvMessages([]);
+    if (!isVerifiedAdmin || !selectedConvoId) {
+      setMessages([]);
       return;
     }
 
-    const unsub = subscribeToConversationMessages(selectedConvId, (msgs) => {
-      setConvMessages(msgs);
+    const unsub = subscribeToChatMessages(selectedConvoId, (msgs) => {
+      setMessages(msgs);
     });
+
+    // Mark conversation read for admin
+    markChatAsRead(selectedConvoId, true);
+
     return () => unsub();
-  }, [isOwner, selectedConvId]);
+  }, [isVerifiedAdmin, selectedConvoId]);
 
   // Auto-scroll messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [convMessages]);
+  }, [messages, selectedConvoId]);
 
   // Handlers for Authentication
   const handleGoogleSignIn = async () => {
@@ -145,7 +162,7 @@ export const AdminDirectDashboard: React.FC<AdminDirectDashboardProps> = ({
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (err: any) {
-      setLoginError(err.message || 'Google sign-in failed');
+      setLoginError(err.message || 'Google authentication failed');
     } finally {
       setLoggingIn(false);
     }
@@ -158,7 +175,7 @@ export const AdminDirectDashboard: React.FC<AdminDirectDashboardProps> = ({
     try {
       await signInWithEmailAndPassword(auth, emailInput.trim(), passwordInput);
     } catch (err: any) {
-      setLoginError(err.message || 'Authentication failed');
+      setLoginError('Authentication failed. Please verify administrator credentials for ' + ADMIN_EMAIL);
     } finally {
       setLoggingIn(false);
     }
@@ -168,100 +185,183 @@ export const AdminDirectDashboard: React.FC<AdminDirectDashboardProps> = ({
     await signOut(auth);
   };
 
-  // Moderation Actions
-  const handleToggleSuspend = async (user: ChatUser) => {
-    const newStatus = !user.isSuspended;
-    if (confirm(`${newStatus ? 'Suspend' : 'Unsuspend'} user ${user.displayName}?`)) {
-      try {
-        await adminSuspendUser(user.userId, newStatus);
-      } catch (err) {
-        alert('Action failed');
-      }
-    }
-  };
-
-  const handleDeleteUser = async (user: ChatUser) => {
-    if (confirm(`Permanently delete account ${user.displayName} (${user.userId}) from the database?`)) {
-      try {
-        await adminDeleteUser(user.userId);
-      } catch (err) {
-        alert('Action failed');
-      }
-    }
-  };
-
-  const handleDeleteMessage = async (msg: RealMessageItem) => {
-    if (confirm('Delete this message permanently from the chat?')) {
-      try {
-        await adminDeleteMessage(msg.conversationId, msg.id);
-      } catch (err) {
-        alert('Failed to delete message');
-      }
-    }
-  };
-
-  const handleDismissReport = async (reportId: string) => {
+  // Admin Accept Friend Request
+  const handleAcceptRequest = async (req: FriendRequest) => {
+    if (!isVerifiedAdmin || processingReqId) return;
+    setProcessingReqId(req.id);
     try {
-      await adminUpdateReportStatus(reportId, 'dismissed');
+      const convoId = await acceptFriendRequest(req, currentUser?.uid || ADMIN_UID);
+      setToastMessage('Friend Request Accepted - Chat Created');
+      setTimeout(() => setToastMessage(null), 3500);
+      // Switch directly to Chats tab and select this new conversation
+      setSelectedConvoId(convoId);
+      setActiveTab('chats');
     } catch (err) {
-      alert('Action failed');
+      console.error('Failed to accept request:', err);
+      alert('Could not accept request. Ensure you are signed in as ' + ADMIN_EMAIL);
+    } finally {
+      setProcessingReqId(null);
     }
   };
 
-  const handleResolveReport = async (report: ReportItem) => {
-    if (confirm(`Suspend reported user ${report.reportedUserId} and resolve report?`)) {
-      try {
-        await adminSuspendUser(report.reportedUserId, true);
-        await adminUpdateReportStatus(report.id, 'reviewed');
-      } catch (err) {
-        alert('Action failed');
-      }
+  // Admin Decline Friend Request
+  const handleDeclineRequest = async (requestId: string) => {
+    if (!isVerifiedAdmin || processingReqId) return;
+    setProcessingReqId(requestId);
+    try {
+      await declineFriendRequest(requestId);
+    } catch (err) {
+      console.error('Failed to decline request:', err);
+    } finally {
+      setProcessingReqId(null);
     }
   };
+
+  // Admin Message Input & Typing
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    setInputText(val);
+
+    if (selectedConvoId) {
+      setChatTyping(selectedConvoId, true, true);
+      if (adminTypingTimeoutRef.current) clearTimeout(adminTypingTimeoutRef.current);
+      adminTypingTimeoutRef.current = setTimeout(() => {
+        if (selectedConvoId) {
+          setChatTyping(selectedConvoId, true, false);
+        }
+      }, 2000);
+    }
+  };
+
+  // Admin Send Message
+  const handleSendMessage = async (e?: React.FormEvent, customText?: string) => {
+    if (e) e.preventDefault();
+    const textToSend = (customText || inputText).trim();
+    if (!textToSend || !selectedConvoId || isSending) return;
+
+    setIsSending(true);
+    setInputText('');
+
+    if (adminTypingTimeoutRef.current) clearTimeout(adminTypingTimeoutRef.current);
+    setChatTyping(selectedConvoId, true, false);
+
+    try {
+      await sendChatMessage(
+        selectedConvoId, 
+        currentUser?.uid || ADMIN_UID, 
+        textToSend, 
+        true, 
+        ADMIN_EMAIL
+      );
+    } catch (err) {
+      console.error('Failed to dispatch admin message:', err);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  // === 3. DELETE RULE - ONLY ADMIN ===
+  // When admin deletes: set deletedByAdmin = true, but keep data for 30 days in archive
+  const handleDeleteChat = async () => {
+    if (!selectedConvoId || isDeleting) return;
+
+    if (currentUser?.email?.toLowerCase() !== ADMIN_EMAIL.toLowerCase() && currentUser?.uid !== ADMIN_UID) {
+      alert('Unauthorized: Only elonmuskspace241@gmail.com can delete conversations.');
+      return;
+    }
+
+    const confirmed = confirm(
+      'Are you sure you want to delete this chat?\n\n' +
+      'Rule: Per platform policy, this conversation will be hidden from the visitor immediately and safely retained in the 30-day platform archive. The system never hard-deletes records automatically.'
+    );
+
+    if (!confirmed) return;
+
+    setIsDeleting(true);
+    try {
+      await adminDeleteConversation(selectedConvoId, currentUser?.email || ADMIN_EMAIL);
+      setSelectedConvoId(null);
+      alert('Conversation has been archived. Retained for 30 days in platform archives.');
+    } catch (err: any) {
+      alert(err.message || 'Failed to delete chat');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  // Selected conversation info
+  const selectedConversation = conversations.find(c => c.id === selectedConvoId);
+  const visitorUid = selectedConversation?.participants?.find(p => p !== (currentUser?.uid || ADMIN_UID)) || '';
+  const visitorDisplayName = selectedConversation?.participantNames?.[visitorUid] || 'Visitor';
+
+  // Filter conversations in search
+  const filteredConversations = conversations.filter((c) => {
+    const vId = c.participants?.find(p => p !== (currentUser?.uid || ADMIN_UID)) || '';
+    const name = (c.participantNames?.[vId] || 'Visitor').toLowerCase();
+    const msg = (c.lastMessage || '').toLowerCase();
+    const q = searchQuery.toLowerCase();
+    return name.includes(q) || msg.includes(q) || vId.includes(q);
+  });
+
+  // Time format helper
+  const formatTime = (ts: any) => {
+    if (!ts) return '';
+    try {
+      const d = ts?.toDate ? ts.toDate() : new Date(ts);
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    } catch {
+      return '';
+    }
+  };
+
+  const pendingRequestsCount = friendRequests.filter(r => r.status === 'pending').length;
 
   // -------------------------------------------------------------------
   // SCREEN 1: ACCESS DENIED OR LOGIN REQUIRED
   // -------------------------------------------------------------------
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-[#050a14] flex items-center justify-center text-[#33ddff] font-mono">
+      <div className="min-h-screen bg-[#000000] flex items-center justify-center text-white font-mono">
         <div className="flex items-center gap-3">
-          <RefreshCw className="w-6 h-6 animate-spin" />
-          <span>VERIFYING OWNER CREDENTIALS...</span>
+          <RefreshCw className="w-5 h-5 animate-spin text-[#0084FF]" />
+          <span>VERIFYING OWNER PERMISSIONS...</span>
         </div>
       </div>
     );
   }
 
-  if (!isOwner) {
+  if (!isVerifiedAdmin) {
     return (
-      <div className="min-h-screen bg-[#050a14] text-gray-200 font-mono flex flex-col items-center justify-center p-4">
-        <div className="max-w-md w-full bg-[#0a152a] border border-[#1a2a4a] rounded-2xl p-6 sm:p-8 shadow-2xl space-y-6">
+      <div className="min-h-screen bg-[#000000] text-white flex flex-col items-center justify-center p-4 font-sans">
+        <div className="max-w-md w-full bg-[#111111] border border-[#222222] rounded-2xl p-6 sm:p-8 shadow-2xl space-y-6">
           
-          <div className="text-center space-y-2">
-            <div className="w-16 h-16 rounded-2xl bg-red-500/10 border border-red-500/30 text-red-400 mx-auto flex items-center justify-center">
-              <Lock className="w-8 h-8" />
+          <div className="text-center space-y-3">
+            <SpaceXIcon size={44} className="mx-auto" withGlow />
+            <div>
+              <h2 className="text-xl font-bold tracking-tight text-white font-tech">
+                Admin Only - Login with {ADMIN_EMAIL}
+              </h2>
+              <div className="text-[10px] text-gray-400 font-mono mt-0.5 uppercase tracking-wider">
+                SPACE X &bull; ELON MUSK SPACE
+              </div>
             </div>
-            <h2 className="text-xl font-extrabold text-white tracking-wider">
-              OWNER ADMIN CONSOLE
-            </h2>
             <p className="text-xs text-gray-400">
-              Restricted Administrative Gateway &bull; Unauthorized Access Prohibited
+              Only <strong>{ADMIN_EMAIL}</strong> can accept requests or delete chats.
             </p>
           </div>
 
           {currentUser ? (
-            /* Logged in with wrong account */
+            /* Logged in with unauthorized email */
             <div className="p-4 rounded-xl bg-red-950/40 border border-red-800 text-xs text-red-300 space-y-3">
               <div className="flex items-center gap-2 font-bold text-red-200">
                 <AlertTriangle className="w-4 h-4 text-red-400" />
-                <span>403 FORBIDDEN — ACCESS DENIED</span>
+                <span>403 FORBIDDEN — ADMIN ACCESS ONLY</span>
               </div>
               <p className="leading-relaxed">
-                Signed in as: <strong className="text-white">{currentUser.email || 'Anonymous Visitor'}</strong>.
+                Currently signed in as: <strong className="text-white">{currentUser.email || 'Anonymous Visitor'}</strong>.
               </p>
               <p className="leading-relaxed text-[11px] text-gray-400">
-                This dashboard is exclusively reserved for the verified platform owner: <strong className="text-[#33ddff]">{ADMIN_EMAIL}</strong>.
+                Per user specification, only <strong className="text-[#0084FF]">{ADMIN_EMAIL}</strong> has permission to accept friend requests or manage chats.
               </p>
               <div className="pt-2 flex gap-2">
                 <button
@@ -272,22 +372,22 @@ export const AdminDirectDashboard: React.FC<AdminDirectDashboardProps> = ({
                 </button>
                 <button
                   onClick={onClose}
-                  className="px-4 py-2 bg-[#1a2a4a] hover:bg-gray-800 text-gray-300 rounded-lg transition-colors cursor-pointer"
+                  className="px-4 py-2 bg-[#222222] hover:bg-[#333333] text-gray-300 rounded-lg transition-colors cursor-pointer"
                 >
-                  Exit
+                  Back to Home
                 </button>
               </div>
             </div>
           ) : (
             /* Not logged in */
             <div className="space-y-4">
-              <div className="p-3 rounded-lg bg-[#050a14] border border-[#1a2a4a] text-xs text-gray-300 space-y-1">
-                <div className="text-[#33ddff] font-bold">AUTHORIZED OWNER ACCOUNT:</div>
+              <div className="p-3 rounded-lg bg-[#0a0a0a] border border-[#222222] text-xs space-y-1">
+                <div className="text-gray-400 text-[10px] uppercase font-mono">REQUIRED ADMIN ACCOUNT:</div>
                 <div className="text-white font-bold">{ADMIN_EMAIL}</div>
               </div>
 
               {loginError && (
-                <div className="p-3 rounded-lg bg-red-900/30 border border-red-700 text-red-300 text-xs">
+                <div className="p-3 rounded-lg bg-red-900/40 border border-red-700 text-red-300 text-xs">
                   {loginError}
                 </div>
               )}
@@ -308,49 +408,56 @@ export const AdminDirectDashboard: React.FC<AdminDirectDashboardProps> = ({
               </button>
 
               <div className="relative flex items-center justify-center my-2">
-                <span className="bg-[#0a152a] px-2 text-[10px] text-gray-500 uppercase">or owner password</span>
-                <div className="absolute inset-x-0 h-px bg-[#1a2a4a] -z-1"></div>
+                <span className="bg-[#111111] px-2 text-[10px] text-gray-500 uppercase font-mono">or email credentials</span>
+                <div className="absolute inset-x-0 h-px bg-[#222222] -z-1"></div>
               </div>
 
               {/* Email / Password Form */}
               <form onSubmit={handleEmailSignIn} className="space-y-3">
                 <div>
-                  <label className="block text-[11px] text-gray-400 mb-1">Owner Email</label>
+                  <label className="block text-[11px] text-gray-400 mb-1">Admin Email</label>
                   <input
                     type="email"
-                    required
                     value={emailInput}
                     onChange={(e) => setEmailInput(e.target.value)}
-                    placeholder={ADMIN_EMAIL}
-                    className="w-full px-3 py-2 bg-[#050a14] border border-[#1a2a4a] text-white rounded-lg text-xs"
+                    required
+                    className="w-full bg-[#1a1a1a] border border-[#333333] rounded-lg px-3 py-2 text-white text-xs focus:border-[#0084FF] focus:outline-hidden"
                   />
                 </div>
                 <div>
                   <label className="block text-[11px] text-gray-400 mb-1">Password</label>
                   <input
                     type="password"
-                    required
                     value={passwordInput}
                     onChange={(e) => setPasswordInput(e.target.value)}
+                    required
                     placeholder="••••••••"
-                    className="w-full px-3 py-2 bg-[#050a14] border border-[#1a2a4a] text-white rounded-lg text-xs"
+                    className="w-full bg-[#1a1a1a] border border-[#333333] rounded-lg px-3 py-2 text-white text-xs focus:border-[#0084FF] focus:outline-hidden"
                   />
                 </div>
                 <button
                   type="submit"
                   disabled={loggingIn}
-                  className="w-full py-2.5 bg-[#33ddff] hover:bg-[#20b8d6] text-[#050a14] font-extrabold text-xs rounded-lg transition-colors cursor-pointer"
+                  className="w-full py-2.5 bg-[#0084FF] hover:bg-[#0070d6] text-white font-bold rounded-lg text-xs transition-colors cursor-pointer"
                 >
-                  {loggingIn ? 'Authenticating...' : 'Authenticate Owner'}
+                  {loggingIn ? 'Authenticating...' : 'Unlock Admin Workspace'}
                 </button>
               </form>
 
-              <button
-                onClick={onClose}
-                className="w-full py-2 text-xs text-gray-500 hover:text-white transition-colors cursor-pointer"
-              >
-                &larr; Return to Visitor Space
-              </button>
+              {/* Anonymous Note */}
+              <div className="p-3 rounded-lg bg-[#0c0c0c] border border-[#1a1a1a] text-[11px] text-gray-400 text-center">
+                <span className="text-gray-500">Anonymous visitor note:</span> Visitors can freely browse all website sections without signing in.
+              </div>
+
+              <div className="pt-1 text-center">
+                <button
+                  onClick={onClose}
+                  className="text-xs text-gray-400 hover:text-white underline cursor-pointer"
+                >
+                  Return to Homepage
+                </button>
+              </div>
+
             </div>
           )}
 
@@ -360,524 +467,522 @@ export const AdminDirectDashboard: React.FC<AdminDirectDashboardProps> = ({
   }
 
   // -------------------------------------------------------------------
-  // SCREEN 2: AUTHORIZED OWNER ADMIN DASHBOARD
+  // SCREEN 2: AUTHORIZED ADMINISTRATOR CONSOLE
   // -------------------------------------------------------------------
-  const filteredUsers = users.filter(u => 
-    u.displayName.toLowerCase().includes(userSearch.toLowerCase()) ||
-    u.userId.toLowerCase().includes(userSearch.toLowerCase())
-  );
-
-  const pendingReports = reports.filter(r => r.status === 'pending');
-  const onlineUsersCount = users.filter(u => u.online).length;
-
   return (
-    <div className="min-h-screen bg-[#050a14] text-gray-200 font-mono flex flex-col">
+    <div className="fixed inset-0 z-50 bg-[#000000] text-white flex flex-col font-sans overflow-hidden">
       
-      {/* Top Header */}
-      <header className="border-b border-[#1a2a4a] bg-[#0a152a] px-4 sm:px-8 py-3.5 flex flex-wrap items-center justify-between gap-4 sticky top-0 z-30 shadow-xl">
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed top-16 right-6 z-50 bg-[#0084FF] text-white text-xs font-bold px-4 py-2.5 rounded-xl shadow-2xl flex items-center gap-2 animate-in fade-in slide-in-from-top-2 duration-200">
+          <CheckCircle2 className="w-4 h-4" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
+      {/* Top Application Bar */}
+      <header className="h-14 bg-[#000000] border-b border-[#222222] px-4 flex items-center justify-between shrink-0 select-none">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-[#33ddff]/10 border border-[#33ddff]/40 flex items-center justify-center text-[#33ddff]">
-            <ShieldCheck className="w-6 h-6" />
+          <div className="flex items-center gap-2.5">
+            <SpaceXIcon size={28} />
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="font-extrabold text-sm tracking-wider uppercase font-mono text-white flex items-center gap-1.5 font-tech">
+                  ADMIN PORTAL
+                </span>
+                <div className="text-[10px] text-[#00C851] leading-none flex items-center gap-1 font-mono font-medium">
+                  <span className="w-2 h-2 rounded-full bg-[#00C851]"></span>
+                  Online
+                </div>
+              </div>
+              <div className="text-[10px] text-gray-400 font-mono leading-none mt-0.5">
+                {ADMIN_EMAIL}
+              </div>
+            </div>
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-extrabold text-white text-base tracking-wider">
-                ELON MUSK SPACE [OWNER DASHBOARD]
-              </span>
-              <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#33ff66]/10 text-[#33ff66] border border-[#33ff66]/30">
-                VERIFIED OWNER
-              </span>
-            </div>
-            <div className="text-[11px] text-gray-400 flex items-center gap-2">
-              <span>{ADMIN_EMAIL}</span>
-              <span>&bull;</span>
-              <span className="text-[#33ddff]">FIRESTORE SYNC ACTIVE</span>
-            </div>
+
+          {/* Navigation Tabs */}
+          <div className="flex items-center gap-1 ml-4 sm:ml-8 border-l border-[#222222] pl-3 sm:pl-6">
+            
+            {/* Tab 1: Friend Requests (pending) (count badge blue) */}
+            <button
+              onClick={() => setActiveTab('requests')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                activeTab === 'requests' 
+                  ? 'bg-[#222222] text-white' 
+                  : 'text-gray-400 hover:text-white hover:bg-[#111111]'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5 text-[#0084FF]" />
+              <span className="hidden sm:inline">Friend Requests (pending)</span>
+              <span className="sm:hidden">Requests</span>
+              {pendingRequestsCount > 0 && (
+                <span className="bg-[#0084FF] text-white text-[10px] font-bold px-1.5 py-0.2 rounded-full">
+                  {pendingRequestsCount}
+                </span>
+              )}
+            </button>
+
+            {/* Tab 2: Private Chats (count) */}
+            <button
+              onClick={() => setActiveTab('chats')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                activeTab === 'chats' 
+                  ? 'bg-[#222222] text-white' 
+                  : 'text-gray-400 hover:text-white hover:bg-[#111111]'
+              }`}
+            >
+              <MessageSquare className="w-3.5 h-3.5 text-[#0084FF]" />
+              <span className="hidden sm:inline">Private Chats ({conversations.length})</span>
+              <span className="sm:hidden">Chats ({conversations.length})</span>
+            </button>
+
+            {/* Tab 3: Catalogue CMS */}
+            <button
+              onClick={() => setActiveTab('cms')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                activeTab === 'cms' 
+                  ? 'bg-[#222222] text-white' 
+                  : 'text-gray-400 hover:text-white hover:bg-[#111111]'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden md:inline">Catalogue CMS</span>
+            </button>
           </div>
         </div>
 
-        {/* Header Right */}
-        <div className="flex items-center gap-3 text-xs">
-          <div className="hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#050a14] border border-[#1a2a4a] text-gray-300">
-            <Clock className="w-3.5 h-3.5 text-[#33ddff]" />
-            <span className="font-mono text-[11px]">{currentTime || 'SYNCING UTC...'}</span>
-          </div>
-
+        {/* Right header actions: Logout button (black with white border) + Exit */}
+        <div className="flex items-center gap-2">
           <button
             onClick={handleSignOut}
-            className="px-3 py-2 bg-[#1a2a4a] hover:bg-gray-700 text-gray-300 hover:text-white rounded-lg text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+            title="Logout from Admin"
+            className="px-3 py-1.5 bg-black text-white border border-white hover:bg-white hover:text-black rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer font-mono"
           >
             <LogOut className="w-3.5 h-3.5" />
-            <span>Sign Out</span>
+            <span className="hidden sm:inline">Logout</span>
           </button>
 
           <button
             onClick={onClose}
-            className="px-3.5 py-2 bg-[#ff3366]/20 hover:bg-[#ff3366]/30 text-[#ff3366] border border-[#ff3366]/40 rounded-lg text-xs font-bold cursor-pointer"
+            title="Exit to Website"
+            className="px-3 py-1.5 bg-[#222222] hover:bg-[#333333] text-gray-300 hover:text-white rounded-lg text-xs font-semibold flex items-center gap-1 transition-colors cursor-pointer"
           >
-            Exit Console
+            <X className="w-4 h-4" />
           </button>
         </div>
       </header>
 
-      {/* Statistics Bar */}
-      <section className="bg-[#070e1c] border-b border-[#1a2a4a] px-4 sm:px-8 py-3">
-        <div className="max-w-7xl mx-auto grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
-          <div className="bg-[#0a152a] p-3 rounded-lg border border-[#1a2a4a] flex items-center justify-between">
-            <span className="text-gray-400">REGISTERED USERS</span>
-            <span className="text-white font-bold">{users.length}</span>
-          </div>
-          <div className="bg-[#0a152a] p-3 rounded-lg border border-[#1a2a4a] flex items-center justify-between">
-            <span className="text-gray-400">ONLINE RIGHT NOW</span>
-            <span className="text-[#33ff66] font-bold">{onlineUsersCount} ACTIVE</span>
-          </div>
-          <div className="bg-[#0a152a] p-3 rounded-lg border border-[#1a2a4a] flex items-center justify-between">
-            <span className="text-gray-400">CONVERSATIONS</span>
-            <span className="text-[#33ddff] font-bold">{conversations.length}</span>
-          </div>
-          <div className="bg-[#0a152a] p-3 rounded-lg border border-[#1a2a4a] flex items-center justify-between">
-            <span className="text-gray-400">PENDING REPORTS</span>
-            <span className={`font-bold ${pendingReports.length > 0 ? 'text-[#ff3366]' : 'text-gray-400'}`}>
-              {pendingReports.length} FLAGGED
-            </span>
-          </div>
-        </div>
-      </section>
-
-      {/* Navigation Tabs */}
-      <div className="max-w-7xl mx-auto w-full px-4 sm:px-8 pt-6">
-        <div className="flex border-b border-[#1a2a4a] gap-2 overflow-x-auto">
-          <button
-            onClick={() => setActiveTab('users')}
-            className={`px-4 py-2.5 text-xs font-bold rounded-t-lg transition-all flex items-center gap-2 cursor-pointer shrink-0 ${
-              activeTab === 'users'
-                ? 'bg-[#0a152a] text-[#33ddff] border-t-2 border-[#33ddff]'
-                : 'text-gray-400 hover:text-white'
-            }`}
-          >
-            <Users className="w-4 h-4" />
-            <span>REGISTERED CHAT USERS ({users.length})</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('conversations')}
-            className={`px-4 py-2.5 text-xs font-bold rounded-t-lg transition-all flex items-center gap-2 cursor-pointer shrink-0 ${
-              activeTab === 'conversations'
-                ? 'bg-[#0a152a] text-[#33ddff] border-t-2 border-[#33ddff]'
-                : 'text-gray-400 hover:text-white'
-            }`}
-          >
-            <MessageSquare className="w-4 h-4" />
-            <span>ALL CONVERSATIONS ({conversations.length})</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('reports')}
-            className={`px-4 py-2.5 text-xs font-bold rounded-t-lg transition-all flex items-center gap-2 cursor-pointer shrink-0 ${
-              activeTab === 'reports'
-                ? 'bg-[#0a152a] text-[#33ddff] border-t-2 border-[#33ddff]'
-                : 'text-gray-400 hover:text-white'
-            }`}
-          >
-            <AlertTriangle className="w-4 h-4" />
-            <span>REPORTED MESSAGES ({pendingReports.length})</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('stats')}
-            className={`px-4 py-2.5 text-xs font-bold rounded-t-lg transition-all flex items-center gap-2 cursor-pointer shrink-0 ${
-              activeTab === 'stats'
-                ? 'bg-[#0a152a] text-[#33ddff] border-t-2 border-[#33ddff]'
-                : 'text-gray-400 hover:text-white'
-            }`}
-          >
-            <Activity className="w-4 h-4" />
-            <span>PLATFORM HEALTH</span>
-          </button>
-
-          <button
-            onClick={() => setActiveTab('cms')}
-            className={`px-4 py-2.5 text-xs font-bold rounded-t-lg transition-all flex items-center gap-2 cursor-pointer shrink-0 ${
-              activeTab === 'cms'
-                ? 'bg-[#0a152a] text-[#33ddff] border-t-2 border-[#33ddff]'
-                : 'text-gray-400 hover:text-white'
-            }`}
-          >
-            <Layers className="w-4 h-4" />
-            <span>CATALOGUE CMS</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Main Content Body */}
-      <main className="max-w-7xl mx-auto w-full px-4 sm:px-8 py-6 flex-1 flex flex-col">
-        
-        {/* TAB 1: REGISTERED CHAT USERS */}
-        {activeTab === 'users' && (
-          <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+      {/* ========================================================= */}
+      {/* TAB 1: FRIEND REQUESTS (PENDING) */}
+      {/* Accept / Decline buttons ONLY visible for elonmuskspace241@gmail.com */}
+      {/* ========================================================= */}
+      {activeTab === 'requests' && (
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-[#0a0a0a]">
+          <div className="max-w-5xl mx-auto space-y-4">
+            
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                  Registered Chat Participants Directory
-                </h3>
-                <p className="text-xs text-gray-400">Real people registered in the Firebase Firestore user collection</p>
+                <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                  <span>FRIEND REQUESTS</span>
+                  <span className="text-xs bg-[#1a1a1a] text-purple-400 border border-purple-800/40 px-2 py-0.5 rounded-full font-mono">
+                    {friendRequests.length} Total
+                  </span>
+                </h2>
+                <p className="text-xs text-gray-400 mt-0.5">
+                  Real Facebook-style friend requests submitted by visitors to chat with Elon Musk.
+                </p>
               </div>
 
-              <div className="relative w-full sm:w-72">
-                <Search className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  placeholder="Search user by name or ID..."
-                  value={userSearch}
-                  onChange={(e) => setUserSearch(e.target.value)}
-                  className="w-full pl-9 pr-3 py-2 bg-[#0a152a] border border-[#1a2a4a] text-white rounded-xl text-xs focus:outline-hidden focus:border-[#33ddff]"
-                />
-              </div>
-            </div>
-
-            <div className="overflow-x-auto border border-[#1a2a4a] rounded-xl bg-[#0a152a]">
-              <table className="w-full text-left text-xs divide-y divide-[#1a2a4a]">
-                <thead className="bg-[#070e1c] text-gray-400 font-semibold">
-                  <tr>
-                    <th className="py-3 px-4">Participant</th>
-                    <th className="py-3 px-4">Visitor / User ID</th>
-                    <th className="py-3 px-4">Presence</th>
-                    <th className="py-3 px-4">Account Status</th>
-                    <th className="py-3 px-4 text-right">Moderation Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-[#1a2a4a]/60">
-                  {filteredUsers.length === 0 ? (
-                    <tr>
-                      <td colSpan={5} className="py-8 text-center text-gray-500">
-                        No registered users matching search.
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredUsers.map((u) => (
-                      <tr key={u.userId} className="hover:bg-[#050a14]/60 transition-colors">
-                        <td className="py-3 px-4">
-                          <div className="flex items-center gap-2.5">
-                            <div className="w-8 h-8 rounded-full bg-linear-to-br from-[#1677FF] to-[#33ddff] flex items-center justify-center font-bold text-white text-xs">
-                              {u.displayName.charAt(0).toUpperCase()}
-                            </div>
-                            <span className="font-bold text-white">{u.displayName}</span>
-                          </div>
-                        </td>
-
-                        <td className="py-3 px-4 font-mono text-[11px] text-gray-400">
-                          {u.userId}
-                        </td>
-
-                        <td className="py-3 px-4">
-                          <div className="flex items-center gap-2">
-                            <span className={`w-2 h-2 rounded-full ${u.online ? 'bg-[#33ff66] animate-pulse' : 'bg-gray-600'}`}></span>
-                            <span className={u.online ? 'text-[#33ff66] font-bold text-[11px]' : 'text-gray-400 text-[11px]'}>
-                              {u.online ? 'ONLINE' : `Seen ${new Date(u.lastSeen || 0).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
-                            </span>
-                          </div>
-                        </td>
-
-                        <td className="py-3 px-4">
-                          {u.isSuspended ? (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/40">
-                              SUSPENDED
-                            </span>
-                          ) : (
-                            <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#33ff66]/10 text-[#33ff66] border border-[#33ff66]/30">
-                              ACTIVE
-                            </span>
-                          )}
-                        </td>
-
-                        <td className="py-3 px-4 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <button
-                              onClick={() => handleToggleSuspend(u)}
-                              className={`px-2.5 py-1 rounded text-[11px] font-bold transition-colors cursor-pointer ${
-                                u.isSuspended
-                                  ? 'bg-[#33ff66]/20 text-[#33ff66] hover:bg-[#33ff66]/30'
-                                  : 'bg-amber-500/20 text-amber-300 hover:bg-amber-500/30'
-                              }`}
-                            >
-                              {u.isSuspended ? 'Unsuspend' : 'Suspend User'}
-                            </button>
-
-                            <button
-                              onClick={() => handleDeleteUser(u)}
-                              className="p-1 text-red-400 hover:text-red-300 hover:bg-red-400/10 rounded transition-colors cursor-pointer"
-                              title="Delete user record"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 2: LIVE CONVERSATIONS */}
-        {activeTab === 'conversations' && (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 flex-1 min-h-[550px]">
-            {/* Conversation list */}
-            <div className="lg:col-span-1 bg-[#0a152a] border border-[#1a2a4a] rounded-xl p-4 flex flex-col space-y-3">
-              <div className="text-xs font-bold text-[#33ddff] uppercase tracking-wider px-1">
-                Active Channels ({conversations.length})
-              </div>
-
-              <div className="flex-1 overflow-y-auto space-y-2 pr-1 max-h-[600px]">
-                {conversations.length === 0 ? (
-                  <div className="text-center py-12 text-xs text-gray-500">
-                    No conversations initiated yet.
-                  </div>
-                ) : (
-                  conversations.map((c) => {
-                    const isSelected = selectedConvId === c.id;
-                    const participantNames = Object.values(c.participantDetails || {})
-                      .map(p => p.displayName)
-                      .join(' ↔ ') || c.participants.join(' ↔ ');
-
-                    return (
-                      <div
-                        key={c.id}
-                        onClick={() => setSelectedConvId(c.id)}
-                        className={`p-3.5 rounded-lg border transition-all cursor-pointer ${
-                          isSelected
-                            ? 'bg-[#1a2a4a] border-[#33ddff] text-white shadow-md'
-                            : 'bg-[#050a14] border-[#1a2a4a] text-gray-300 hover:border-gray-500'
-                        }`}
-                      >
-                        <div className="font-bold text-xs text-white truncate">
-                          {participantNames}
-                        </div>
-                        <p className="text-[11px] text-gray-400 truncate mt-1">
-                          {c.lastMessage || 'Channel established'}
-                        </p>
-                        <div className="flex items-center justify-between text-[10px] text-gray-500 mt-2">
-                          <span>{new Date(c.lastMessageAt || c.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                          <span className="text-[#33ddff]">INSPECT LOGS &rarr;</span>
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
+              {/* Status Filters */}
+              <div className="flex gap-1.5 text-xs">
+                {(['pending', 'accepted', 'declined', 'all'] as const).map(tab => (
+                  <button
+                    key={tab}
+                    onClick={() => setReqFilter(tab)}
+                    className={`px-3 py-1 rounded-lg uppercase font-mono text-xs cursor-pointer transition-colors ${
+                      reqFilter === tab 
+                        ? 'bg-[#0084FF] text-white font-bold' 
+                        : 'bg-[#161616] text-gray-400 hover:text-white'
+                    }`}
+                  >
+                    {tab}
+                  </button>
+                ))}
               </div>
             </div>
 
-            {/* Conversation Inspector Area */}
-            <div className="lg:col-span-2 bg-[#0a152a] border border-[#1a2a4a] rounded-xl flex flex-col overflow-hidden">
-              {selectedConvId ? (
-                <>
-                  <div className="p-4 bg-[#050a14] border-b border-[#1a2a4a] flex items-center justify-between">
-                    <div>
-                      <div className="text-xs font-bold text-white flex items-center gap-2">
-                        <span>CHANNEL: {selectedConvId}</span>
-                        <span className="w-2 h-2 rounded-full bg-[#33ff66] animate-pulse"></span>
-                      </div>
-                      <div className="text-[11px] text-gray-400">
-                        {convMessages.length} permanent human messages recorded
-                      </div>
-                    </div>
+            {/* Requests List */}
+            <div className="grid gap-3">
+              {friendRequests
+                .filter(r => reqFilter === 'all' || r.status === reqFilter)
+                .map((req) => {
+                  const isProcessing = processingReqId === req.id;
 
-                    <button
-                      onClick={() => setSelectedConvId(null)}
-                      className="px-3 py-1 bg-[#1a2a4a] text-gray-300 hover:text-white rounded text-xs"
+                  return (
+                    <div 
+                      key={req.id} 
+                      className="bg-[#111111] border border-[#222222] p-4 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-[#333333] transition-colors"
                     >
-                      Close
-                    </button>
-                  </div>
-
-                  <div className="h-[55vh] overflow-y-auto p-4 space-y-3 bg-[#070e1c]">
-                    {convMessages.length === 0 ? (
-                      <div className="text-center py-12 text-xs text-gray-500">
-                        No messages recorded in this channel.
-                      </div>
-                    ) : (
-                      convMessages.map((m) => (
-                        <div
-                          key={m.id}
-                          className="bg-[#050a14] border border-[#1a2a4a] p-3 rounded-xl flex items-start justify-between gap-3"
-                        >
-                          <div className="space-y-1 max-w-[85%]">
-                            <div className="flex items-center gap-2 text-[10px] text-gray-400">
-                              <span className="font-bold text-[#33ddff]">{m.senderName}</span>
-                              <span>&bull;</span>
-                              <span>ID: {m.senderId}</span>
-                              <span>&bull;</span>
-                              <span>{new Date(m.createdAt).toLocaleTimeString()}</span>
-                              <span className="px-1.5 py-0.2 rounded bg-blue-900/40 text-blue-300 uppercase text-[9px]">
-                                {m.status}
-                              </span>
-                            </div>
-                            <div className="text-xs text-gray-200 whitespace-pre-wrap leading-relaxed">
-                              {m.text}
-                            </div>
-                            {m.imageUrl && (
-                              <img src={m.imageUrl} alt="attachment" className="max-w-xs rounded-lg mt-1 border border-gray-700" />
-                            )}
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2.5">
+                          <div className="w-8 h-8 rounded-full bg-[#1e1e1e] border border-white/10 flex items-center justify-center font-bold text-white text-xs">
+                            {req.senderName.charAt(0).toUpperCase()}
                           </div>
+                          <div>
+                            <span className="font-bold text-sm text-white">{req.senderName}</span>
+                            <span className="text-[10px] text-gray-500 font-mono ml-2">ID: {req.senderId.slice(-6)}</span>
+                          </div>
+
+                          <span className={`text-[10px] px-2 py-0.2 rounded uppercase font-mono ml-2 ${
+                            req.status === 'accepted' ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' :
+                            req.status === 'declined' ? 'bg-red-950 text-red-400 border border-red-800' :
+                            'bg-amber-950 text-amber-400 border border-amber-800 animate-pulse'
+                          }`}>
+                            {req.status}
+                          </span>
+                        </div>
+
+                        {req.message && (
+                          <p className="text-xs text-gray-300 pl-10">"{req.message}"</p>
+                        )}
+
+                        <div className="text-[10px] text-gray-500 pl-10 font-mono">
+                          Target: {req.receiverEmail} &bull; {formatTime(req.createdAt)}
+                        </div>
+                      </div>
+
+                      {/* Accept/Decline ONLY VISIBLE FOR elonmuskspace241@gmail.com */}
+                      {req.status === 'pending' && isVerifiedAdmin && (
+                        <div className="flex items-center gap-2 shrink-0 sm:self-center pl-10 sm:pl-0">
+                          <button
+                            onClick={() => handleAcceptRequest(req)}
+                            disabled={isProcessing}
+                            className="px-4 py-2 bg-[#0084FF] hover:bg-[#0070d6] text-white rounded-lg text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-md"
+                          >
+                            <UserCheck className="w-3.5 h-3.5" />
+                            <span>{isProcessing ? 'Accepting...' : 'Accept'}</span>
+                          </button>
 
                           <button
-                            onClick={() => handleDeleteMessage(m)}
-                            className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-900/30 rounded transition-colors cursor-pointer shrink-0"
-                            title="Delete inappropriate message"
+                            onClick={() => handleDeclineRequest(req.id)}
+                            disabled={isProcessing}
+                            className="px-3.5 py-2 bg-[#222222] hover:bg-[#333333] text-gray-300 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors cursor-pointer"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <UserX className="w-3.5 h-3.5" />
+                            <span>Decline</span>
                           </button>
                         </div>
-                      ))
-                    )}
-                    <div ref={messagesEndRef} />
-                  </div>
-                </>
-              ) : (
-                <div className="h-full flex flex-col items-center justify-center p-8 text-center text-gray-500 space-y-2">
-                  <MessageSquare className="w-10 h-10 text-[#1a2a4a]" />
-                  <p className="text-sm font-bold text-gray-300">Select a conversation</p>
-                  <p className="text-xs max-w-xs">
-                    Choose any channel on the left to monitor messages and remove any inappropriate content.
-                  </p>
+                      )}
+                    </div>
+                  );
+                })}
+
+              {friendRequests.filter(r => reqFilter === 'all' || r.status === reqFilter).length === 0 && (
+                <div className="p-12 text-center text-gray-500 text-xs bg-[#111111] rounded-xl border border-[#222222]">
+                  No {reqFilter} friend requests found.
                 </div>
               )}
             </div>
 
           </div>
-        )}
+        </div>
+      )}
 
-        {/* TAB 3: REPORTED MESSAGES */}
-        {activeTab === 'reports' && (
-          <div className="space-y-4">
-            <div>
-              <h3 className="text-sm font-bold text-white uppercase tracking-wider">
-                Flagged &amp; Reported Abuse Moderation Queue
-              </h3>
-              <p className="text-xs text-gray-400">
-                User-submitted flags for abusive language, scams, or offensive content
-              </p>
+      {/* ========================================================= */}
+      {/* TAB 2: CHATS (ACCEPTED FRIENDSHIPS) */}
+      {/* Facebook Messenger Desktop 2-Pane Layout */}
+      {/* ========================================================= */}
+      {activeTab === 'chats' && (
+        <div className="flex-1 flex overflow-hidden bg-[#000000]">
+          
+          {/* Left Sidebar (320px) */}
+          <aside className="w-80 sm:w-[320px] shrink-0 bg-[#000000] border-r border-[#222222] flex flex-col h-full overflow-hidden select-none">
+            <div className="p-3.5 space-y-3 border-b border-[#1a1a1a]">
+              <div className="flex items-center justify-between">
+                <h1 className="text-xl font-bold text-white tracking-tight font-sans">
+                  Chats
+                </h1>
+                <span className="text-xs text-gray-400 font-mono">
+                  {conversations.length} Friends
+                </span>
+              </div>
+
+              {/* Search input */}
+              <div className="relative">
+                <Search className="w-4 h-4 text-gray-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search Messenger"
+                  className="w-full bg-[#1a1a1a] text-white text-[13px] placeholder-gray-500 pl-9 pr-3 py-1.5 rounded-full border border-transparent focus:border-white/30 focus:outline-hidden transition-all"
+                />
+              </div>
             </div>
 
-            {reports.length === 0 ? (
-              <div className="bg-[#0a152a] border border-[#1a2a4a] rounded-xl p-12 text-center text-gray-500 space-y-2">
-                <CheckCircle2 className="w-8 h-8 text-[#33ff66]/60 mx-auto" />
-                <p className="text-sm font-bold text-gray-300">No reports on file</p>
-                <p className="text-xs">Community chat reports will appear here for review.</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {reports.map((r) => (
-                  <div
-                    key={r.id}
-                    className="bg-[#0a152a] border border-[#1a2a4a] rounded-xl p-5 flex flex-col md:flex-row md:items-center justify-between gap-4"
-                  >
-                    <div className="space-y-2 max-w-2xl">
-                      <div className="flex items-center gap-2 text-xs">
-                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-red-500/20 text-red-400 border border-red-500/40">
-                          {r.status.toUpperCase()}
-                        </span>
-                        <span className="text-gray-400">
-                          Reported by: <strong className="text-white">{r.reportedByName || r.reportedBy}</strong>
-                        </span>
-                        <span>&bull;</span>
-                        <span className="text-gray-500">{new Date(r.createdAt).toLocaleString()}</span>
-                      </div>
+            {/* Conversations list */}
+            <div className="flex-1 overflow-y-auto divide-y divide-[#111111]">
+              {filteredConversations.length === 0 ? (
+                <div className="p-6 text-center text-gray-500 text-xs space-y-2">
+                  <p>No active chats.</p>
+                  <p className="text-[11px] text-gray-600">
+                    Accept incoming friend requests in Tab 1 to start real human 1-on-1 conversations.
+                  </p>
+                </div>
+              ) : (
+                filteredConversations.map((conv) => {
+                  const vUid = conv.participants?.find(p => p !== (currentUser?.uid || ADMIN_UID)) || '';
+                  const name = conv.participantNames?.[vUid] || 'Visitor';
+                  const isSelected = conv.id === selectedConvoId;
+                  const hasUnread = (conv.unreadForAdmin || 0) > 0;
 
-                      <div className="p-3 bg-[#050a14] border border-[#1a2a4a] rounded-lg text-xs">
-                        <div className="text-[10px] text-gray-400 mb-1">
-                          FLAGGED MESSAGE (Sender ID: {r.reportedUserId}):
+                  return (
+                    <button
+                      key={conv.id}
+                      onClick={() => setSelectedConvoId(conv.id)}
+                      className={`w-full p-3 flex items-center gap-3 text-left transition-colors cursor-pointer ${
+                        isSelected ? 'bg-[#1a1a1a]' : 'hover:bg-[#0f0f0f]'
+                      }`}
+                    >
+                      <div className="relative shrink-0">
+                        <div className="w-11 h-11 rounded-full bg-[#1e1e1e] border border-white/10 flex items-center justify-center text-white font-bold text-sm">
+                          {name.charAt(0).toUpperCase()}
                         </div>
-                        <div className="text-gray-200 italic">"{r.messageText}"</div>
+                        <span className="absolute bottom-0 right-0 w-3 h-3 bg-[#00C851] rounded-full border-2 border-black"></span>
                       </div>
 
-                      <div className="text-xs text-amber-300">
-                        <strong>Reason provided:</strong> {r.reason}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center justify-between">
+                          <span className={`text-[13px] truncate ${hasUnread ? 'font-bold text-white' : 'font-semibold text-gray-200'}`}>
+                            {name}
+                          </span>
+                          <span className="text-[10px] text-gray-500 ml-1 shrink-0">
+                            {formatTime(conv.lastMessageTime)}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-between mt-0.5">
+                          <p className={`text-[12px] truncate ${hasUnread ? 'text-white font-medium' : 'text-gray-400'}`}>
+                            {conv.lastMessage || 'Connected'}
+                          </p>
+                          {hasUnread && (
+                            <span className="bg-[#0084FF] text-white text-[11px] font-bold px-1.5 py-0.2 rounded-full shrink-0 ml-2">
+                              {conv.unreadForAdmin}
+                            </span>
+                          )}
+                        </div>
                       </div>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+
+            <div className="p-3 bg-[#0a0a0a] border-t border-[#1a1a1a] text-[11px] text-gray-400 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-[#00C851]"></span>
+                Replying as <strong className="text-white">Elon Musk</strong>
+              </span>
+              <span className="text-[10px] text-gray-600 font-mono">30-day Retention</span>
+            </div>
+          </aside>
+
+          {/* Right Main Chat Pane */}
+          <main className="flex-1 flex flex-col h-full bg-[#000000] overflow-hidden">
+            {selectedConversation ? (
+              <>
+                {/* Active Chat Header */}
+                <div className="h-14 bg-[#000000] border-b border-[#222222] px-4 flex items-center justify-between shrink-0 select-none">
+                  <div className="flex items-center gap-3">
+                    <div className="relative">
+                      <div className="w-10 h-10 rounded-full bg-[#222222] border border-white/20 flex items-center justify-center text-white font-bold text-sm">
+                        {visitorDisplayName.charAt(0).toUpperCase()}
+                      </div>
+                      <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-[#00C851] rounded-full border-2 border-black"></span>
                     </div>
 
-                    <div className="flex flex-wrap md:flex-col gap-2 shrink-0">
-                      {r.status === 'pending' ? (
-                        <>
-                          <button
-                            onClick={() => handleResolveReport(r)}
-                            className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white font-bold text-xs rounded-lg transition-colors cursor-pointer"
-                          >
-                            Suspend Abuser &amp; Resolve
-                          </button>
-                          <button
-                            onClick={() => handleDismissReport(r.id)}
-                            className="px-4 py-2 bg-[#1a2a4a] hover:bg-gray-700 text-gray-300 text-xs rounded-lg transition-colors cursor-pointer"
-                          >
-                            Dismiss Report
-                          </button>
-                        </>
-                      ) : (
-                        <span className="text-xs text-gray-500 font-bold">
-                          ✓ Handled ({r.status})
-                        </span>
-                      )}
+                    <div>
+                      <div className="text-[14px] font-bold text-white leading-tight flex items-center gap-2">
+                        {visitorDisplayName}
+                        <span className="text-[9px] bg-emerald-500/20 text-emerald-400 px-1 py-0.2 rounded font-mono">FRIEND</span>
+                      </div>
+                      <div className="text-[11px] text-[#00C851] flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-[#00C851]"></span>
+                        Active now &bull; ID: {visitorUid.slice(-6)}
+                      </div>
                     </div>
                   </div>
-                ))}
+
+                  {/* === 3. DELETE RULE - ONLY ADMIN ===
+                      Delete Chat button (black border white text, 12px)
+                  */}
+                  {isVerifiedAdmin && (
+                    <button
+                      onClick={handleDeleteChat}
+                      disabled={isDeleting}
+                      title="Delete conversation (30-day archive retention)"
+                      className="px-3 py-1 bg-black text-white border border-white hover:bg-[#1a1a1a] rounded-md text-[12px] font-semibold flex items-center gap-1.5 transition-colors cursor-pointer font-mono"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>{isDeleting ? 'Archiving...' : 'Delete Chat'}</span>
+                    </button>
+                  )}
+                </div>
+
+                {/* Message Thread */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#000000] text-[13px]">
+                  <div className="text-center py-4 border-b border-[#111111] mb-2">
+                    <div className="w-14 h-14 rounded-full mx-auto bg-[#1a1a1a] border border-white/20 flex items-center justify-center text-white font-extrabold text-xl mb-1.5">
+                      {visitorDisplayName.charAt(0).toUpperCase()}
+                    </div>
+                    <h3 className="text-white font-bold text-base">{visitorDisplayName}</h3>
+                    <p className="text-xs text-gray-500">Connected through accepted friend request</p>
+                  </div>
+
+                  {messages.map((msg) => {
+                    const isAdminMsg = msg.senderEmail === ADMIN_EMAIL || msg.senderId === (currentUser?.uid || ADMIN_UID);
+
+                    return (
+                      <div
+                        key={msg.id}
+                        className={`flex flex-col ${isAdminMsg ? 'items-end' : 'items-start'}`}
+                      >
+                        <div className="flex items-end gap-2 max-w-[70%]">
+                          {!isAdminMsg && (
+                            <div className="w-7 h-7 rounded-full bg-[#222222] border border-white/20 flex items-center justify-center text-white font-bold text-xs shrink-0 mb-1">
+                              {visitorDisplayName.charAt(0).toUpperCase()}
+                            </div>
+                          )}
+
+                          {/* Bubble: Admin #0084FF, Visitor #303030 */}
+                          <div
+                            className={`px-3.5 py-2 text-[13px] leading-relaxed break-words ${
+                              isAdminMsg
+                                ? 'bg-[#0084FF] text-white rounded-2xl rounded-br-xs shadow-xs'
+                                : 'bg-[#303030] text-white rounded-2xl rounded-bl-xs shadow-xs'
+                            }`}
+                          >
+                            {msg.text}
+                          </div>
+                        </div>
+
+                        {/* Timestamp & receipts */}
+                        <div className="flex items-center gap-1 text-[10px] text-gray-500 mt-0.5 px-1 font-mono">
+                          <span>{formatTime(msg.timestamp)}</span>
+                          {isAdminMsg && (
+                            <span className="flex items-center text-gray-400">
+                              &bull; {msg.read ? (
+                                <span className="text-[#0084FF] flex items-center gap-0.5 font-medium">
+                                  <CheckCheck className="w-3 h-3" /> Seen
+                                </span>
+                              ) : (
+                                <span className="flex items-center gap-0.5">
+                                  <Check className="w-3 h-3" /> Delivered
+                                </span>
+                              )}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+
+                  {/* Visitor Typing Indicator */}
+                  {selectedConversation.isTypingForVisitor && (
+                    <div className="flex items-end gap-2">
+                      <div className="w-7 h-7 rounded-full bg-[#222222] border border-white/20 flex items-center justify-center text-white font-bold text-xs shrink-0 mb-1">
+                        {visitorDisplayName.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="bg-[#303030] px-3.5 py-2 rounded-2xl rounded-bl-xs flex items-center gap-1">
+                        <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+                        <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+                        <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"></span>
+                      </div>
+                    </div>
+                  )}
+
+                  <div ref={messagesEndRef} />
+                </div>
+
+                {/* Quick Reply Presets */}
+                <div className="bg-[#0a0a0a] px-4 py-2 border-t border-[#1a1a1a] flex items-center gap-2 overflow-x-auto text-xs shrink-0">
+                  <span className="text-[10px] text-gray-500 uppercase font-mono shrink-0">Fast Reply:</span>
+                  {[
+                    "Welcome! Excited to connect with you.",
+                    "Starlink and SpaceX are making huge strides this year.",
+                    "Let me know your thoughts on our latest technology roadmap."
+                  ].map((phrase, i) => (
+                    <button
+                      key={i}
+                      onClick={() => handleSendMessage(undefined, phrase)}
+                      className="px-2.5 py-1 bg-[#1a1a1a] hover:bg-[#252525] text-gray-300 hover:text-white rounded-full text-[11px] shrink-0 transition-colors cursor-pointer"
+                    >
+                      {phrase}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Input Bar */}
+                <form
+                  onSubmit={handleSendMessage}
+                  className="bg-[#000000] border-t border-[#222222] p-3 flex items-center gap-2.5 shrink-0"
+                >
+                  <div className="flex-1 relative flex items-center">
+                    <input
+                      type="text"
+                      value={inputText}
+                      onChange={handleInputChange}
+                      placeholder="Aa"
+                      className="w-full bg-[#222222] text-white text-[13px] placeholder-gray-500 px-4 py-2.5 rounded-full border border-transparent focus:border-white/30 focus:outline-hidden transition-all"
+                    />
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={!inputText.trim() || isSending}
+                    title="Send as Elon Musk"
+                    className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 transition-transform ${
+                      inputText.trim()
+                        ? 'bg-[#0084FF] text-white cursor-pointer hover:scale-105 active:scale-95 shadow-md'
+                        : 'text-gray-600 bg-transparent cursor-not-allowed'
+                    }`}
+                  >
+                    <Send className="w-4 h-4 ml-0.5" />
+                  </button>
+                </form>
+              </>
+            ) : (
+              <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-gray-500">
+                <div className="w-16 h-16 rounded-full bg-[#111111] border border-[#222222] flex items-center justify-center text-white mb-4">
+                  <MessageSquare className="w-8 h-8 text-[#0084FF]" />
+                </div>
+                <h3 className="text-white font-bold text-lg mb-1">Select a conversation</h3>
+                <p className="text-xs text-gray-400 max-w-sm">
+                  Accepted friends appear here. You can chat directly with visitors in real-time.
+                </p>
               </div>
             )}
+          </main>
+
+        </div>
+      )}
+
+      {/* ========================================================= */}
+      {/* TAB 3: CATALOGUE CMS */}
+      {/* ========================================================= */}
+      {activeTab === 'cms' && (
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 bg-[#0a0a0a]">
+          <div className="max-w-6xl mx-auto">
+            <AdminCMSModal
+              isOpen={true}
+              onClose={() => setActiveTab('requests')}
+              items={items}
+            />
           </div>
-        )}
+        </div>
+      )}
 
-        {/* TAB 4: PLATFORM STATS */}
-        {activeTab === 'stats' && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-[#0a152a] border border-[#1a2a4a] rounded-xl p-5 space-y-2">
-                <span className="text-xs text-gray-400">Total User Base</span>
-                <div className="text-3xl font-bold text-white">{users.length}</div>
-                <div className="text-[11px] text-[#33ff66]">Persistent Firestore records</div>
-              </div>
-
-              <div className="bg-[#0a152a] border border-[#1a2a4a] rounded-xl p-5 space-y-2">
-                <span className="text-xs text-gray-400">Active Real-Time Channels</span>
-                <div className="text-3xl font-bold text-[#33ddff]">{conversations.length}</div>
-                <div className="text-[11px] text-gray-400">Direct 1-on-1 human conversations</div>
-              </div>
-
-              <div className="bg-[#0a152a] border border-[#1a2a4a] rounded-xl p-5 space-y-2">
-                <span className="text-xs text-gray-400">Backend Authority</span>
-                <div className="text-lg font-bold text-[#33ff66] flex items-center gap-1.5">
-                  <CheckCircle2 className="w-5 h-5" />
-                  <span>Cloud Firestore Online</span>
-                </div>
-                <div className="text-[11px] text-gray-400">Project: gen-lang-client-0894854388</div>
-              </div>
-            </div>
-
-            <div className="bg-[#0a152a] border border-[#1a2a4a] rounded-xl p-6 space-y-3">
-              <h4 className="text-sm font-bold text-white uppercase tracking-wider">
-                System Security &amp; Compliance Audit
-              </h4>
-              <ul className="text-xs text-gray-300 space-y-2 list-disc list-inside leading-relaxed">
-                <li>Human-to-Human real-time communication verified via Firebase Firestore listeners (`onSnapshot`).</li>
-                <li>Zero AI chatbot or automated bot responses in conversations.</li>
-                <li>Messages stored permanently in `conversations/{'{id}'}/messages` with read status.</li>
-                <li>Administrative privileges enforced exclusively for owner `{ADMIN_EMAIL}`.</li>
-                <li>Ordinary visitors have zero access to moderation endpoints or administrative data.</li>
-              </ul>
-            </div>
-          </div>
-        )}
-
-        {/* TAB 5: CATALOGUE CMS */}
-        {activeTab === 'cms' && (
-          <AdminCMSModal
-            isOpen={true}
-            onClose={() => setActiveTab('users')}
-            items={items}
-          />
-        )}
-
-      </main>
     </div>
   );
 };

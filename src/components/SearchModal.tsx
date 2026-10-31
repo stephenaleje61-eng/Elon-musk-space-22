@@ -20,15 +20,15 @@ export const SearchModal: React.FC<SearchModalProps> = ({
   if (!isOpen) return null;
 
   const results = items.filter(it => {
-    const q = query.toLowerCase().trim();
+    const q = (query || '').toLowerCase().trim();
     if (!q) return true;
     return (
-      it.title.toLowerCase().includes(q) ||
-      it.category.toLowerCase().includes(q) ||
-      it.description.toLowerCase().includes(q) ||
-      it.sectionId.toLowerCase().includes(q) ||
+      (it.title || '').toLowerCase().includes(q) ||
+      (it.category || '').toLowerCase().includes(q) ||
+      (it.description || '').toLowerCase().includes(q) ||
+      (it.sectionId || '').toLowerCase().includes(q) ||
       Object.entries(it.specifications || {}).some(([k, v]) => 
-        k.toLowerCase().includes(q) || v.toLowerCase().includes(q)
+        (k || '').toLowerCase().includes(q) || String(v || '').toLowerCase().includes(q)
       )
     );
   }).slice(0, 15);

@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 import { SECTIONS } from '../data/seedData';
 import { SectionId } from '../types';
+import { SpaceXIcon } from './SpaceXIcon';
 
 interface FooterProps {
   onSelectSection: (id: SectionId) => void;
@@ -30,12 +31,15 @@ export const Footer: React.FC<FooterProps> = ({ onSelectSection, onOpenChat }) =
           {/* Brand & Manifesto */}
           <div className="lg:col-span-2 space-y-4">
             <div className="flex items-center gap-2.5">
-              <div className="w-9 h-9 rounded-xl bg-linear-to-br from-[#1677FF] to-blue-800 flex items-center justify-center text-white">
-                <Rocket className="w-5 h-5 transform -rotate-45" />
+              <SpaceXIcon size={28} />
+              <div>
+                <span className="font-extrabold text-base tracking-wider text-white font-tech block leading-tight">
+                  ELON MUSK SPACE
+                </span>
+                <span className="text-[10px] text-gray-400 font-mono font-medium">
+                  SPACE X
+                </span>
               </div>
-              <span className="font-extrabold text-base tracking-wider text-white font-tech">
-                ELON MUSK SPACE
-              </span>
             </div>
 
             <p className="text-gray-400 text-xs leading-relaxed max-w-sm">

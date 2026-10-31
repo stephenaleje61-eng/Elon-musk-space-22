@@ -62,10 +62,10 @@ export const SectionView: React.FC<SectionViewProps> = ({
   const sectionItems = items.filter(it => it.sectionId === sectionId);
 
   const filteredItems = sectionItems.filter(it => {
-    const matchesCategory = selectedCategory === 'all' || it.category.toLowerCase().includes(selectedCategory.toLowerCase());
-    const matchesSearch = it.title.toLowerCase().includes(searchFilter.toLowerCase()) ||
-                          it.description.toLowerCase().includes(searchFilter.toLowerCase()) ||
-                          it.category.toLowerCase().includes(searchFilter.toLowerCase());
+    const matchesCategory = selectedCategory === 'all' || (it.category || '').toLowerCase().includes((selectedCategory || '').toLowerCase());
+    const matchesSearch = (it.title || '').toLowerCase().includes((searchFilter || '').toLowerCase()) ||
+                          (it.description || '').toLowerCase().includes((searchFilter || '').toLowerCase()) ||
+                          (it.category || '').toLowerCase().includes((searchFilter || '').toLowerCase());
     return matchesCategory && matchesSearch;
   });
 

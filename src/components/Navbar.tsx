@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Rocket, 
   Search, 
@@ -10,10 +10,14 @@ import {
   ShieldCheck, 
   TrendingUp, 
   Sparkles,
-  ExternalLink
+  ExternalLink,
+  Shield
 } from 'lucide-react';
 import { SectionId } from '../types';
 import { SECTIONS } from '../data/seedData';
+import { SpaceXIcon } from './SpaceXIcon';
+import { auth, ADMIN_EMAIL } from '../lib/firebase';
+import { onAuthStateChanged, User } from 'firebase/auth';
 
 interface NavbarProps {
   currentSection: SectionId | 'home';
@@ -38,6 +42,16 @@ export const Navbar: React.FC<NavbarProps> = ({
 }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sectionsDropdownOpen, setSectionsDropdownOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState<User | null>(auth.currentUser);
+
+  useEffect(() => {
+    const unsub = onAuthStateChanged(auth, (user) => {
+      setCurrentUser(user);
+    });
+    return () => unsub();
+  }, []);
+
+  const isAdmin = currentUser?.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase();
 
   return (
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md border-b border-gray-200 shadow-xs font-sans">
@@ -59,20 +73,18 @@ export const Navbar: React.FC<NavbarProps> = ({
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16 sm:h-20 gap-2 sm:gap-4">
           
-          {/* Logo & Brand Name */}
+          {/* Logo & Brand Name with SpaceX */}
           <button 
             onClick={() => onSelectSection('home')}
-            className="flex items-center gap-3 text-left focus:outline-hidden group shrink-0 cursor-pointer"
+            className="flex items-center gap-2.5 text-left focus:outline-hidden group shrink-0 cursor-pointer"
           >
-            <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-xl bg-linear-to-br from-[#05070B] via-[#111827] to-[#1677FF] flex items-center justify-center text-white shadow-md group-hover:scale-105 transition-transform duration-200">
-              <Rocket className="w-5 h-5 sm:w-6 sm:h-6 text-white transform -rotate-45" />
-            </div>
+            <SpaceXIcon size={28} className="group-hover:scale-105 transition-transform duration-200" />
             <div>
-              <div className="font-extrabold tracking-wider text-base sm:text-xl text-[#111111] font-tech flex items-center gap-1.5">
+              <div className="font-extrabold tracking-wider text-base sm:text-lg text-[#111111] font-tech flex items-center gap-1.5 leading-tight">
                 ELON MUSK SPACE
               </div>
-              <div className="text-[10px] sm:text-xs text-gray-500 font-medium tracking-tight">
-                INNOVATION &bull; TECHNOLOGY &bull; FUTURE
+              <div className="text-[10px] text-gray-500 font-semibold tracking-wider font-mono">
+                SPACE X
               </div>
             </div>
           </button>
@@ -161,6 +173,28 @@ export const Navbar: React.FC<NavbarProps> = ({
               <span className="hidden xl:inline text-xs text-gray-500 font-medium">Search catalogue...</span>
               <kbd className="hidden xl:inline bg-gray-100 text-gray-400 text-[10px] px-1.5 py-0.5 rounded border border-gray-200">⌘K</kbd>
             </button>
+
+            {/* ADMIN PORTAL BUTTON (Prominent pill for verified admin, or portal access button) */}
+            {isAdmin ? (
+              <button
+                onClick={onOpenAdminBoard}
+                className="px-3.5 py-1.5 bg-white text-black border-2 border-black rounded-full font-bold text-xs tracking-wider shadow-xs hover:bg-gray-100 flex items-center gap-1.5 transition-all cursor-pointer font-mono"
+                title="Elon Musk Administrator Portal"
+              >
+                <SpaceXIcon size={16} />
+                <span>ADMIN PORTAL</span>
+                <span className="w-2 h-2 rounded-full bg-[#00C851]"></span>
+              </button>
+            ) : (
+              <button
+                onClick={onOpenAdminBoard}
+                className="hidden sm:inline-flex items-center gap-1.5 px-3 py-1.5 bg-black text-white hover:bg-gray-900 border border-black rounded-full font-bold text-xs transition-colors cursor-pointer font-mono"
+                title="Administrator Login"
+              >
+                <SpaceXIcon size={14} />
+                <span>ADMIN</span>
+              </button>
+            )}
 
             {/* Saved Items */}
             <button

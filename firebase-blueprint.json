@@ -64,6 +64,36 @@
       },
       "required": ["reportedBy", "reportedUserId", "messageId", "messageText", "reason"]
     },
+    "FriendRequest": {
+      "title": "FriendRequest",
+      "description": "Visitor-submitted friend request to chat with Elon Musk",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "senderId": { "type": "string", "maxLength": 128 },
+        "senderName": { "type": "string", "maxLength": 128 },
+        "senderEmail": { "type": "string", "maxLength": 256 },
+        "receiverEmail": { "type": "string", "maxLength": 256 },
+        "status": { "type": "string", "enum": ["pending", "accepted", "declined"] },
+        "message": { "type": "string", "maxLength": 1000 },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["senderId", "senderName", "receiverEmail", "status"]
+    },
+    "Friendship": {
+      "title": "Friendship",
+      "description": "Confirmed friendship between admin and visitor",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "participants": { "type": "string" },
+        "adminEmail": { "type": "string", "maxLength": 256 },
+        "visitorId": { "type": "string", "maxLength": 128 },
+        "status": { "type": "string", "enum": ["friends"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["participants", "adminEmail", "visitorId", "status"]
+    },
     "AdminRecord": {
       "title": "AdminRecord",
       "description": "Admin authorization entry",
@@ -146,6 +176,14 @@
     }
   },
   "firestore": {
+    "/friendRequests/{requestId}": {
+      "schema": { "$ref": "FriendRequest" },
+      "description": "Visitor friend requests awaiting admin decision"
+    },
+    "/friendships/{friendshipId}": {
+      "schema": { "$ref": "Friendship" },
+      "description": "Accepted friendships between visitor and Elon Musk"
+    },
     "/users/{userId}": {
       "schema": { "$ref": "ChatUser" },
       "description": "Registered chat participants with presence and display profile"

@@ -33,6 +33,21 @@ export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 
 export const ADMIN_EMAIL = 'elonmuskspace241@gmail.com';
+export const ADMIN_UID = 'ADMIN_ELON_MUSK_OFFICIAL';
+
+// Enable Firestore offline persistence so messages and documents never disappear
+import { enableIndexedDbPersistence } from 'firebase/firestore';
+try {
+  enableIndexedDbPersistence(db).catch((err) => {
+    if (err.code === 'failed-precondition') {
+      console.warn('Firestore persistence warning: multiple tabs open, active in primary tab.');
+    } else if (err.code === 'unimplemented') {
+      console.warn('Firestore persistence not fully supported in this browser engine.');
+    }
+  });
+} catch (e) {
+  // Graceful fallback for non-browser / mock contexts
+}
 
 // Operation types for strict Firestore error handling
 export enum OperationType {
@@ -102,6 +117,8 @@ testFirestoreConnection();
 export async function checkIsAdmin(user: User | null): Promise<boolean> {
   if (!user) return false;
   
+  if (user.uid === ADMIN_UID) return true;
+
   // Check bootstrapped admin email
   if (user.email?.toLowerCase() === ADMIN_EMAIL.toLowerCase()) {
     // Ensure document exists in admins collection for server-side rule satisfaction

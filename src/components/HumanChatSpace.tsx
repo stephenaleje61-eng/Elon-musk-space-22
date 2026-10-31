@@ -266,10 +266,12 @@ export const HumanChatSpace: React.FC<HumanChatSpaceProps> = ({
   };
 
   // Filtered directory users
-  const otherUsers = allUsers.filter(u => u.userId !== visitorId);
-  const filteredUsers = otherUsers.filter(u => 
-    u.displayName.toLowerCase().includes(userSearch.toLowerCase())
-  );
+  const otherUsers = allUsers.filter(u => u && u.userId !== visitorId);
+  const filteredUsers = otherUsers.filter(u => {
+    const name = (u?.displayName || u?.userId || '').toLowerCase();
+    const query = (userSearch || '').trim().toLowerCase();
+    return !query || name.includes(query);
+  });
 
   return (
     <div className={`bg-[#050a14] text-white flex flex-col font-mono overflow-hidden ${
@@ -434,14 +436,14 @@ export const HumanChatSpace: React.FC<HumanChatSpaceProps> = ({
                       <div className="flex items-center gap-3 truncate">
                         <div className="relative shrink-0">
                           <div className="w-8 h-8 rounded-full bg-linear-to-br from-[#1677FF] to-[#33ddff] flex items-center justify-center font-bold text-white text-xs">
-                            {u.displayName.charAt(0).toUpperCase()}
+                            {(u.displayName || u.userId || 'U').charAt(0).toUpperCase()}
                           </div>
                           <span className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-[#0a152a] ${
                             u.online ? 'bg-[#33ff66]' : 'bg-gray-500'
                           }`}></span>
                         </div>
                         <div className="truncate">
-                          <div className="font-bold text-xs text-white truncate">{u.displayName}</div>
+                          <div className="font-bold text-xs text-white truncate">{u.displayName || u.userId || 'Anonymous Member'}</div>
                           <div className="text-[10px] text-gray-400">
                             {u.online ? 'Online now' : `Seen ${new Date(u.lastSeen || 0).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`}
                           </div>
@@ -518,7 +520,7 @@ export const HumanChatSpace: React.FC<HumanChatSpaceProps> = ({
 
                   <div className="relative">
                     <div className="w-9 h-9 rounded-full bg-linear-to-br from-[#1677FF] to-[#33ddff] flex items-center justify-center font-bold text-white text-xs shadow-sm">
-                      {activeOtherUser.displayName.charAt(0).toUpperCase()}
+                      {(activeOtherUser.displayName || activeOtherUser.userId || 'U').charAt(0).toUpperCase()}
                     </div>
                     <span className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-[#0a152a] ${
                       activeOtherUser.online ? 'bg-[#33ff66] animate-pulse' : 'bg-gray-500'
@@ -527,7 +529,7 @@ export const HumanChatSpace: React.FC<HumanChatSpaceProps> = ({
 
                   <div>
                     <div className="font-bold text-sm text-white flex items-center gap-2">
-                      <span>{activeOtherUser.displayName}</span>
+                      <span>{activeOtherUser.displayName || activeOtherUser.userId || 'Member'}</span>
                       <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${
                         activeOtherUser.online ? 'bg-[#33ff66]/10 text-[#33ff66]' : 'bg-gray-700 text-gray-400'
                       }`}>
@@ -672,7 +674,7 @@ export const HumanChatSpace: React.FC<HumanChatSpaceProps> = ({
 
                 <input
                   type="text"
-                  placeholder={`Message ${activeOtherUser.displayName}...`}
+                  placeholder={`Message ${activeOtherUser.displayName || 'Member'}...`}
                   value={messageText}
                   onChange={(e) => setMessageText(e.target.value)}
                   disabled={sending || myUser?.isSuspended}
@@ -709,7 +711,7 @@ export const HumanChatSpace: React.FC<HumanChatSpaceProps> = ({
                   onClick={() => handleSelectUser(otherUsers[0])}
                   className="px-4 py-2 bg-[#1677FF] hover:bg-blue-600 text-white font-bold text-xs rounded-xl transition-colors cursor-pointer"
                 >
-                  Chat with {otherUsers[0].displayName} &rarr;
+                  Chat with {otherUsers[0].displayName || otherUsers[0].userId || 'Member'} &rarr;
                 </button>
               )}
             </div>
